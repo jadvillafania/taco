@@ -7,12 +7,14 @@ use tauri::{
 mod wslpath;
 mod payload;
 mod retention;
+mod capture;
 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .manage(capture::CaptureState(Default::default()))
         .setup(|app| {
             let captures = crate::retention::data_dir(app.handle()).join("captures");
             std::thread::spawn(move || {
