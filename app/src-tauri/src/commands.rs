@@ -6,6 +6,13 @@ pub fn start_region_capture(app: &AppHandle) {
     if app.get_webview_window("overlay").is_some() {
         return; // capture already in progress
     }
+    // A new capture supersedes any open composer: close it and drop its pending capture file.
+    if let Some(c) = app.get_webview_window("composer") {
+        c.close().ok();
+        if let Some(path) = app.state::<CaptureState>().0.lock().unwrap().capture.take() {
+            std::fs::remove_file(path).ok();
+        }
+    }
     let frozen = match capture::freeze_monitor_under_cursor(app) {
         Ok(f) => f,
         Err(e) => return notify(app, "Capture failed", &e),
@@ -40,7 +47,7 @@ pub fn get_frame(state: State<CaptureState>) -> Result<String, String> {
 
 #[tauri::command]
 pub fn region_selected(app: AppHandle, state: State<CaptureState>, x: u32, y: u32, w: u32, h: u32) -> Result<(), String> {
-    let (path, px, py) = {
+    let (_, px, py) = {
         let mut inner = state.0.lock().unwrap();
         let frozen = inner.frozen.take().ok_or("no frozen frame")?;
         let path = capture::save_crop(&app, &frozen.image, x, y, w, h)?;
@@ -48,21 +55,27 @@ pub fn region_selected(app: AppHandle, state: State<CaptureState>, x: u32, y: u3
         inner.capture = Some(path.clone());
         (path, frozen.mon_x + x as i32, frozen.mon_y + (y + h) as i32 + 12)
     };
-    let _ = path;
     if let Some(o) = app.get_webview_window("overlay") { o.close().ok(); }
     open_composer(&app, px, py);
     Ok(())
 }
 
 pub fn open_composer(app: &AppHandle, px: i32, py: i32) {
-    let win = WebviewWindowBuilder::new(app, "composer", WebviewUrl::App("index.html?window=composer".into()))
+    // Defensively close any existing composer before opening a new one (label must be unique).
+    if let Some(c) = app.get_webview_window("composer") {
+        c.close().ok();
+    }
+    let win = match WebviewWindowBuilder::new(app, "composer", WebviewUrl::App("index.html?window=composer".into()))
         .title("Send to Claude Code")
         .inner_size(420.0, 380.0)
         .always_on_top(true)
         .resizable(false)
         .visible(false)
         .build()
-        .expect("composer window");
+    {
+        Ok(w) => w,
+        Err(_) => return notify(app, "Capture failed", "could not open composer window"),
+    };
     win.set_position(PhysicalPosition::new(px.max(0), py.max(0))).ok();
     win.show().ok();
     win.set_focus().ok();
