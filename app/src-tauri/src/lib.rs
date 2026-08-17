@@ -27,7 +27,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_frame,
             commands::region_selected,
-            commands::cancel_capture
+            commands::cancel_capture,
+            commands::get_capture,
+            commands::send_capture
         ])
         .manage(capture::CaptureState(Default::default()))
         .setup(|app| {
@@ -57,7 +59,7 @@ pub fn run() {
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "quit" => app.exit(0),
                     "capture_region" => crate::commands::start_region_capture(app),
-                    "capture_screen" => { /* Task 9 */ }
+                    "capture_screen" => crate::commands::start_screen_capture(app),
                     _ => {}
                 })
                 .build(app)?;

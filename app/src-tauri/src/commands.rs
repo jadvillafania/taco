@@ -93,4 +93,35 @@ pub fn cancel_capture(app: AppHandle, state: State<CaptureState>) {
     }
 }
 
+#[tauri::command]
+pub fn get_capture(state: State<CaptureState>) -> Result<String, String> {
+    state.0.lock().unwrap().capture.as_ref()
+        .map(|p| p.to_string_lossy().into_owned())
+        .ok_or_else(|| "no capture".into())
+}
+
+#[tauri::command]
+pub fn send_capture(app: AppHandle, state: State<CaptureState>, message: Option<String>) -> Result<(), String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    let path = state.0.lock().unwrap().capture.clone().ok_or("no capture")?;
+    let wsl = crate::wslpath::to_wsl_path(&path.to_string_lossy())
+        .ok_or("capture path is not on a Windows drive")?;
+    let payload = crate::payload::build_payload(message.as_deref(), &wsl);
+    app.clipboard().write_text(payload).map_err(|e| e.to_string())?;
+    state.0.lock().unwrap().capture = None; // sent: keep the file, forget the pending state
+    if let Some(w) = app.get_webview_window("composer") { w.close().ok(); }
+    notify(&app, "Screenshot ready", "Ready — paste into your Claude Code terminal");
+    Ok(())
+}
+
+pub fn start_screen_capture(app: &AppHandle) {
+    match capture::save_full(app) {
+        Ok(path) => {
+            app.state::<CaptureState>().0.lock().unwrap().capture = Some(path);
+            open_composer(app, 200, 200);
+        }
+        Err(e) => notify(app, "Capture failed", &e),
+    }
+}
+
 // ponytail: composer position = below-left of selection, clamped to >=0; smarter monitor-edge clamping when it annoys someone
