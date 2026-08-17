@@ -5,6 +5,7 @@ use tauri::{
 };
 
 mod wslpath;
+mod payload;
 
 pub fn run() {
     tauri::Builder::default()
