@@ -8,14 +8,33 @@ mod wslpath;
 mod payload;
 mod retention;
 mod capture;
+mod commands;
 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        crate::commands::start_region_capture(app);
+                    }
+                })
+                .build(),
+        )
+        .invoke_handler(tauri::generate_handler![
+            commands::get_frame,
+            commands::region_selected,
+            commands::cancel_capture
+        ])
         .manage(capture::CaptureState(Default::default()))
         .setup(|app| {
+            use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
+            app.global_shortcut()
+                .register(Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space))?;
+
             let captures = crate::retention::data_dir(app.handle()).join("captures");
             std::thread::spawn(move || {
                 let _ = crate::retention::sweep(
@@ -37,7 +56,7 @@ pub fn run() {
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "quit" => app.exit(0),
-                    "capture_region" => { /* Task 8 */ }
+                    "capture_region" => crate::commands::start_region_capture(app),
                     "capture_screen" => { /* Task 9 */ }
                     _ => {}
                 })
