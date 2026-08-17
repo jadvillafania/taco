@@ -6,6 +6,7 @@ use tauri::{
 
 mod wslpath;
 mod payload;
+mod retention;
 
 pub fn run() {
     tauri::Builder::default()
@@ -13,6 +14,15 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
+            let captures = crate::retention::data_dir(app.handle()).join("captures");
+            std::thread::spawn(move || {
+                let _ = crate::retention::sweep(
+                    &captures,
+                    std::time::Duration::from_secs(24 * 3600),
+                    std::time::SystemTime::now(),
+                ); // ponytail: fixed 24h retention; settings UI when someone asks
+            });
+
             let region = MenuItem::with_id(
                 app, "capture_region", "Capture Region\tCtrl+Shift+Space", true, None::<&str>,
             )?;
