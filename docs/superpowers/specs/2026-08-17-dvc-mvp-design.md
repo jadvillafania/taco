@@ -121,12 +121,26 @@ as `wsl.exe -d <distro> ~/.local/share/dvc/dvc-shim send --session <sid>`.
 - Session selector UI in the composer (auto-select single session; picker for
   multiple; spec §13's focused-window matching is M3).
 
-## Milestone 3 — P1 extras (planned when picked up)
+## Milestone 3 — P1 extras
 
-Clipboard image capture (`Ctrl+Shift+V`), active-window capture, automatic
-session selection by focused project, annotation, capture history, settings
-UI, Windows startup. Deliberately unplanned now — each is independent and
-gets scoped when wanted.
+Automatic session selection shipped first (foreground window title sampled at
+capture start; matching session ranked to index 0; manual dropdown as
+fallback). The rest is planned in
+`docs/superpowers/plans/2026-08-19-m3-p1-extras.md`:
+
+- **Active-window capture** — `Ctrl+Alt+Space` + tray; DWM frame bounds of the
+  foreground window cropped from its monitor's capture.
+- **Clipboard image capture** — `Ctrl+Alt+V` + tray (deviates from the
+  original `Ctrl+Shift+V`, which would steal paste-as-plain-text system-wide).
+- **Windows startup** — `tauri-plugin-autostart` behind a tray check item.
+- **Capture history** — tray window listing recent capture PNGs with
+  resend / delete / clear-all (spec §31.3, §16).
+- **Annotation** — composer canvas with pen, arrow, rectangle, undo, in red,
+  composited into the PNG before send (spec §10 subset; circle/text/blur
+  deferred).
+- **Settings** — retention hours + default instruction in
+  `settings.json` (spec §20 kept minimal; hotkey remapping and image
+  format/quality deferred).
 
 ## Testing
 
