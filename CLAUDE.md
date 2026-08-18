@@ -44,6 +44,8 @@ powershell.exe -Command "cd C:\Users\jvillafania\dev\claude_companion\app; pnpm 
 
 - The shim (`shim/`, from M2) is the opposite: a Linux musl binary built **in
   WSL** with `cargo build --release --target x86_64-unknown-linux-musl`.
+  After changing `shim/`, rebuild and re-copy the bundled resource:
+  `cargo build --release --target x86_64-unknown-linux-musl && cp target/x86_64-unknown-linux-musl/release/dvc-shim ../app/src-tauri/resources/dvc-shim`
 - `tauri dev` opens real windows on the Windows desktop — UI behavior
   (tray, global hotkey, capture overlay) can only be verified there, not
   in WSL.
