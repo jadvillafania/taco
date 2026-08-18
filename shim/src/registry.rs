@@ -59,8 +59,8 @@ mod tests {
 
     #[test]
     fn runtime_dir_honors_override() {
-        std::env::set_var("DVC_RUNTIME_DIR", "/tmp/dvc-test-x");
+        unsafe { std::env::set_var("DVC_RUNTIME_DIR", "/tmp/dvc-test-x") };
         assert_eq!(runtime_dir(), std::path::PathBuf::from("/tmp/dvc-test-x"));
-        std::env::remove_var("DVC_RUNTIME_DIR");
+        unsafe { std::env::remove_var("DVC_RUNTIME_DIR") };
     }
 }
