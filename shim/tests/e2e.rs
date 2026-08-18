@@ -118,3 +118,35 @@ fn refuses_while_user_is_typing() {
     child.wait().unwrap();
     std::fs::remove_dir_all(&tmp).ok();
 }
+
+#[test]
+fn send_client_roundtrip_and_missing_session() {
+    let tmp = std::env::temp_dir().join(format!("dvc-e2e-cli-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let mut child = spawn_cat(&tmp);
+    let sid = child.id().to_string();
+    let sock = tmp.join(format!("{sid}.sock"));
+    wait_for("socket", || sock.exists());
+    std::thread::sleep(Duration::from_millis(1100));
+
+    let mut cli = Command::new(env!("CARGO_BIN_EXE_dvc-shim"))
+        .args(["send", "--session", &sid])
+        .env("DVC_RUNTIME_DIR", &tmp)
+        .stdin(Stdio::piped()).stdout(Stdio::piped())
+        .spawn().unwrap();
+    cli.stdin.take().unwrap().write_all(b"from-client\n").unwrap();
+    let out = cli.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "stdout: {}", String::from_utf8_lossy(&out.stdout));
+    assert!(String::from_utf8_lossy(&out.stdout).contains(r#""type":"ack"#));
+
+    let out = Command::new(env!("CARGO_BIN_EXE_dvc-shim"))
+        .args(["send", "--session", "999999"])
+        .env("DVC_RUNTIME_DIR", &tmp)
+        .stdin(Stdio::null()).stdout(Stdio::piped())
+        .output().unwrap();
+    assert_eq!(out.status.code(), Some(3));
+
+    child.stdin.take().unwrap().write_all(&[0x04]).unwrap();
+    child.wait().unwrap();
+    std::fs::remove_dir_all(&tmp).ok();
+}
