@@ -9,12 +9,16 @@ mod payload;
 mod retention;
 mod capture;
 mod commands;
+mod deployer;
+mod sessions;
+mod tier1;
 mod winpos;
 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -30,7 +34,8 @@ pub fn run() {
             commands::region_selected,
             commands::cancel_capture,
             commands::get_capture,
-            commands::send_capture
+            commands::send_capture,
+            sessions::list_sessions_cmd
         ])
         .manage(capture::CaptureState(Default::default()))
         .manage(commands::LastComposerPos(Default::default()))
@@ -62,8 +67,10 @@ pub fn run() {
                 app, "capture_region", "Capture Region\tCtrl+Shift+Space", true, None::<&str>,
             )?;
             let screen = MenuItem::with_id(app, "capture_screen", "Capture Screen", true, None::<&str>)?;
+            let install_shim = MenuItem::with_id(app, "install_shim", "Install WSL Shim…", true, None::<&str>)?;
+            let remove_shim = MenuItem::with_id(app, "remove_shim", "Remove WSL Shim", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Exit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&region, &screen, &quit])?;
+            let menu = Menu::with_items(app, &[&region, &screen, &install_shim, &remove_shim, &quit])?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Developer Visual Companion")
@@ -72,6 +79,34 @@ pub fn run() {
                     "quit" => app.exit(0),
                     "capture_region" => crate::commands::start_region_capture(app),
                     "capture_screen" => crate::commands::start_screen_capture(app),
+                    "install_shim" => {
+                        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+                        let app = app.clone();
+                        std::thread::spawn(move || {
+                            let ok = app.dialog().message(
+                                "This copies dvc-shim into your WSL distribution (~/.local/share/dvc/) and adds a 'claude' alias to ~/.bashrc so sessions support instant delivery.\n\nBoth changes are reversible via 'Remove WSL Shim'.")
+                                .title("Install WSL shim?")
+                                .buttons(MessageDialogButtons::OkCancelCustom("Install".into(), "Cancel".into()))
+                                .blocking_show();
+                            if !ok { return; }
+                            let result = crate::deployer::default_distro()
+                                .and_then(|d| crate::deployer::install(&app, &d));
+                            match result {
+                                Ok(()) => crate::commands::notify(&app, "Shim installed", "Restart your terminal, then run 'claude' as usual."),
+                                Err(e) => crate::commands::notify(&app, "Shim install failed", &e),
+                            }
+                        });
+                    }
+                    "remove_shim" => {
+                        let app = app.clone();
+                        std::thread::spawn(move || {
+                            let result = crate::deployer::default_distro().and_then(|d| crate::deployer::remove(&d));
+                            match result {
+                                Ok(()) => crate::commands::notify(&app, "Shim removed", "Alias and binary deleted."),
+                                Err(e) => crate::commands::notify(&app, "Shim removal failed", &e),
+                            }
+                        });
+                    }
                     _ => {}
                 })
                 .build(app)?;
