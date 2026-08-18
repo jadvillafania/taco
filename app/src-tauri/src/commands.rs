@@ -183,17 +183,46 @@ pub fn get_capture(state: State<CaptureState>) -> Result<String, String> {
         .ok_or_else(|| "no capture".into())
 }
 
+#[derive(serde::Deserialize)]
+pub struct TargetSession { pub sid: String, pub distro: String, pub project: String }
+
 #[tauri::command]
-pub async fn send_capture(app: AppHandle, state: State<'_, CaptureState>, message: Option<String>) -> Result<(), String> {
+pub async fn send_capture(
+    app: AppHandle,
+    state: State<'_, CaptureState>,
+    message: Option<String>,
+    session: Option<TargetSession>,
+) -> Result<(), String> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
     let path = state.0.lock().unwrap().capture.clone().ok_or("no capture")?;
     let wsl = crate::wslpath::to_wsl_path(&path.to_string_lossy())
         .ok_or("capture path is not on a Windows drive")?;
     let payload = crate::payload::build_payload(message.as_deref(), &wsl);
+
+    if let Some(s) = &session {
+        match crate::tier1::send_via_shim(&s.distro, &s.sid, &payload) {
+            crate::tier1::Outcome::Ack => {
+                state.0.lock().unwrap().capture = None;
+                if let Some(w) = app.get_webview_window("composer") { w.close().ok(); }
+                notify(&app, "Screenshot sent to Claude Code", &s.project); // spec §21 copy
+                return Ok(());
+            }
+            crate::tier1::Outcome::Rejected(reason) => {
+                // Tier 2 fallback below — a send never hard-fails while Tier 2 is possible
+                let _ = reason;
+            }
+        }
+    }
+
     app.clipboard().write_text(payload).map_err(|e| e.to_string())?;
     state.0.lock().unwrap().capture = None; // sent: keep the file, forget the pending state
     if let Some(w) = app.get_webview_window("composer") { w.close().ok(); }
-    notify(&app, "Screenshot ready", "Ready — paste into your Claude Code terminal");
+    let body = if session.is_some() {
+        "Session busy or unreachable — payload copied. Paste into your Claude Code terminal"
+    } else {
+        "Ready — paste into your Claude Code terminal"
+    };
+    notify(&app, "Screenshot ready", body);
     Ok(())
 }
 

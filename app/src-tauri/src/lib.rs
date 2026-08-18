@@ -10,6 +10,7 @@ mod retention;
 mod capture;
 mod commands;
 mod sessions;
+mod tier1;
 mod winpos;
 
 pub fn run() {
