@@ -56,9 +56,40 @@ pub fn list_sessions() -> Vec<Session> {
     sessions
 }
 
+/// Spec §13: the session matching the focused project moves to index 0, where the
+/// composer's existing auto-select picks it up. No match leaves the order alone.
+// ponytail: substring match on project name; short names ("app") can false-match —
+// the manual dropdown stays as the fallback.
+pub fn rank_sessions(mut sessions: Vec<Session>, focus_title: Option<&str>) -> Vec<Session> {
+    if let Some(title) = focus_title {
+        let title = title.to_lowercase();
+        if let Some(i) = sessions.iter().position(|s| {
+            !s.project.is_empty() && title.contains(&s.project.to_lowercase())
+        }) {
+            let hit = sessions.remove(i);
+            sessions.insert(0, hit);
+        }
+    }
+    sessions
+}
+
+/// Title of the foreground window, sampled at capture start (before our overlay takes focus).
+pub fn foreground_title() -> Option<String> {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW};
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() { return None; }
+        let mut buf = [0u16; 512];
+        let len = GetWindowTextW(hwnd, &mut buf);
+        if len <= 0 { return None; }
+        Some(String::from_utf16_lossy(&buf[..len as usize]))
+    }
+}
+
 #[tauri::command]
-pub fn list_sessions_cmd() -> Vec<Session> {
-    list_sessions()
+pub fn list_sessions_cmd(state: tauri::State<crate::capture::CaptureState>) -> Vec<Session> {
+    let title = state.0.lock().unwrap().focus_title.clone();
+    rank_sessions(list_sessions(), title.as_deref())
 }
 
 #[cfg(test)]
@@ -72,6 +103,31 @@ mod tests {
             bytes.extend_from_slice(&u.to_le_bytes());
         }
         assert_eq!(parse_wsl_list(&bytes), vec!["Ubuntu", "Debian"]);
+    }
+
+    fn sess(project: &str) -> Session {
+        Session { sid: project.into(), distro: "Ubuntu".into(), project: project.into(), cwd: format!("/home/j/{project}") }
+    }
+
+    #[test]
+    fn rank_moves_focused_project_first() {
+        let ranked = rank_sessions(vec![sess("other"), sess("my-app")], Some("main.ts - my-app - Visual Studio Code"));
+        assert_eq!(ranked[0].project, "my-app");
+        assert_eq!(ranked[1].project, "other");
+    }
+
+    #[test]
+    fn rank_is_case_insensitive() {
+        let ranked = rank_sessions(vec![sess("other"), sess("My-App")], Some("MY-APP — file.rs"));
+        assert_eq!(ranked[0].project, "My-App");
+    }
+
+    #[test]
+    fn rank_keeps_order_when_no_match_or_no_title() {
+        let ranked = rank_sessions(vec![sess("a"), sess("b")], Some("unrelated window"));
+        assert_eq!(ranked[0].project, "a");
+        let ranked = rank_sessions(vec![sess("a"), sess("b")], None);
+        assert_eq!(ranked[0].project, "a");
     }
 
     #[test]
