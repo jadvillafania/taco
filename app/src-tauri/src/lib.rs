@@ -9,6 +9,7 @@ mod payload;
 mod retention;
 mod capture;
 mod commands;
+mod winpos;
 
 pub fn run() {
     tauri::Builder::default()
@@ -32,6 +33,7 @@ pub fn run() {
             commands::send_capture
         ])
         .manage(capture::CaptureState(Default::default()))
+        .manage(commands::LastComposerPos(Default::default()))
         .setup(|app| {
             use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
             app.global_shortcut()

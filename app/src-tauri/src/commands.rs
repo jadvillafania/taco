@@ -47,20 +47,21 @@ pub fn get_frame(state: State<CaptureState>) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn region_selected(app: AppHandle, state: State<'_, CaptureState>, x: u32, y: u32, w: u32, h: u32) -> Result<(), String> {
-    let (_, px, py) = {
+    {
         let mut inner = state.0.lock().unwrap();
         let frozen = inner.frozen.take().ok_or("no frozen frame")?;
         let path = capture::save_crop(&app, &frozen.image, x, y, w, h)?;
         std::fs::remove_file(&frozen.frame_png).ok();
-        inner.capture = Some(path.clone());
-        (path, frozen.mon_x + x as i32, frozen.mon_y + (y + h) as i32 + 12)
-    };
+        inner.capture = Some(path);
+    }
     if let Some(o) = app.get_webview_window("overlay") { o.close().ok(); }
-    open_composer(&app, px, py);
+    open_composer(&app);
     Ok(())
 }
 
-pub fn open_composer(app: &AppHandle, px: i32, py: i32) {
+pub struct LastComposerPos(pub std::sync::Mutex<Option<(i32, i32)>>);
+
+pub fn open_composer(app: &AppHandle) {
     // Defensively close any existing composer before opening a new one (label must be unique).
     if let Some(c) = app.get_webview_window("composer") {
         c.close().ok();
@@ -77,19 +78,52 @@ pub fn open_composer(app: &AppHandle, px: i32, py: i32) {
         Err(_) => return notify(app, "Capture failed", "could not open composer window"),
     };
 
-    let mut x = px.max(0);
-    let mut y = py.max(0);
-    let monitor = win.current_monitor().ok().flatten().or_else(|| win.primary_monitor().ok().flatten());
-    if let Some(mon) = monitor {
-        let size = win.outer_size().unwrap_or(PhysicalSize::new(420, 380));
+    let size = win.outer_size().unwrap_or(PhysicalSize::new(420, 380));
+    let monitors: Vec<(i32, i32, u32, u32)> = win
+        .available_monitors()
+        .map(|ms| ms.iter().map(|m| (m.position().x, m.position().y, m.size().width, m.size().height)).collect())
+        .unwrap_or_default();
+
+    let data_dir = crate::retention::data_dir(app);
+    let saved = crate::winpos::load(&data_dir).filter(|&(x, y)| crate::winpos::on_any_monitor(x, y, &monitors));
+    let (mut x, mut y) = saved.unwrap_or_else(|| {
+        // default: center of the primary monitor
+        match win.primary_monitor().ok().flatten() {
+            Some(m) => (
+                m.position().x + (m.size().width as i32 - size.width as i32) / 2,
+                m.position().y + (m.size().height as i32 - size.height as i32) / 2,
+            ),
+            None => (100, 100),
+        }
+    });
+
+    // safety net: clamp onto the monitor the point falls on (or primary) exactly as the existing clamp did
+    if let Some(mon) = win.current_monitor().ok().flatten().or_else(|| win.primary_monitor().ok().flatten()) {
         let mon_pos = mon.position();
         let mon_size = mon.size();
         let max_x = mon_pos.x + mon_size.width as i32 - size.width as i32;
         let max_y = mon_pos.y + mon_size.height as i32 - size.height as i32;
-        x = x.clamp(mon_pos.x, max_x.max(mon_pos.x));
-        y = y.clamp(mon_pos.y, max_y.max(mon_pos.y));
+        if saved.is_none() {
+            x = x.clamp(mon_pos.x.min(max_x), max_x.max(mon_pos.x));
+            y = y.clamp(mon_pos.y.min(max_y), max_y.max(mon_pos.y));
+        }
     }
     win.set_position(PhysicalPosition::new(x, y)).ok();
+
+    // track moves; persist on destroy
+    let app2 = app.clone();
+    win.on_window_event(move |event| match event {
+        tauri::WindowEvent::Moved(p) => {
+            *app2.state::<LastComposerPos>().0.lock().unwrap() = Some((p.x, p.y));
+        }
+        tauri::WindowEvent::Destroyed => {
+            if let Some((x, y)) = *app2.state::<LastComposerPos>().0.lock().unwrap() {
+                crate::winpos::save(&crate::retention::data_dir(&app2), x, y);
+            }
+        }
+        _ => {}
+    });
+
     win.show().ok();
     win.set_focus().ok();
 }
@@ -132,10 +166,8 @@ pub fn start_screen_capture(app: &AppHandle) {
     match capture::save_full(app) {
         Ok(path) => {
             app.state::<CaptureState>().0.lock().unwrap().capture = Some(path);
-            open_composer(app, 200, 200);
+            open_composer(app);
         }
         Err(e) => notify(app, "Capture failed", &e),
     }
 }
-
-// ponytail: composer position = below-left of selection, clamped to >=0; smarter monitor-edge clamping when it annoys someone
