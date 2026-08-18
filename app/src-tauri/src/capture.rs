@@ -16,6 +16,7 @@ pub struct Frozen {
 pub struct Inner {
     pub frozen: Option<Frozen>,
     pub capture: Option<PathBuf>,
+    pub focus_title: Option<String>,
 }
 pub struct CaptureState(pub Mutex<Inner>);
 

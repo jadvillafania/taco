@@ -25,7 +25,9 @@ pub fn start_region_capture(app: &AppHandle) {
     if app.get_webview_window("overlay").is_some() {
         return; // capture already in progress
     }
+    let focus = crate::sessions::foreground_title(); // before our windows take focus
     supersede_pending_capture(app);
+    app.state::<CaptureState>().0.lock().unwrap().focus_title = focus;
     let frozen = match capture::freeze_monitor_under_cursor(app) {
         Ok(f) => f,
         Err(e) => return notify(app, "Capture failed", &e),
@@ -227,7 +229,9 @@ pub async fn send_capture(
 }
 
 pub fn start_screen_capture(app: &AppHandle) {
+    let focus = crate::sessions::foreground_title();
     supersede_pending_capture(app);
+    app.state::<CaptureState>().0.lock().unwrap().focus_title = focus;
     match capture::save_full(app) {
         Ok(path) => {
             app.state::<CaptureState>().0.lock().unwrap().capture = Some(path);
