@@ -9,6 +9,7 @@ mod payload;
 mod retention;
 mod capture;
 mod commands;
+mod sessions;
 mod winpos;
 
 pub fn run() {
@@ -30,7 +31,8 @@ pub fn run() {
             commands::region_selected,
             commands::cancel_capture,
             commands::get_capture,
-            commands::send_capture
+            commands::send_capture,
+            sessions::list_sessions_cmd
         ])
         .manage(capture::CaptureState(Default::default()))
         .manage(commands::LastComposerPos(Default::default()))
