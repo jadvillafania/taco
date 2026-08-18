@@ -36,8 +36,18 @@ pub fn run() {
         .manage(commands::LastComposerPos(Default::default()))
         .setup(|app| {
             use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
-            app.global_shortcut()
-                .register(Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space))?;
+            if let Err(e) = app
+                .global_shortcut()
+                .register(Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space))
+            {
+                // Another app may already hold this hotkey. Don't let that kill the whole app —
+                // the tray menu still works, so notify and keep going.
+                crate::commands::notify(
+                    app.handle(),
+                    "Hotkey unavailable",
+                    &format!("Ctrl+Shift+Space is taken by another app — use the tray menu ({e})"),
+                );
+            }
 
             let captures = crate::retention::data_dir(app.handle()).join("captures");
             std::thread::spawn(move || {
