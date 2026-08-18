@@ -46,7 +46,7 @@ pub fn get_frame(state: State<CaptureState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn region_selected(app: AppHandle, state: State<CaptureState>, x: u32, y: u32, w: u32, h: u32) -> Result<(), String> {
+pub async fn region_selected(app: AppHandle, state: State<'_, CaptureState>, x: u32, y: u32, w: u32, h: u32) -> Result<(), String> {
     let (_, px, py) = {
         let mut inner = state.0.lock().unwrap();
         let frozen = inner.frozen.take().ok_or("no frozen frame")?;
@@ -76,13 +76,26 @@ pub fn open_composer(app: &AppHandle, px: i32, py: i32) {
         Ok(w) => w,
         Err(_) => return notify(app, "Capture failed", "could not open composer window"),
     };
-    win.set_position(PhysicalPosition::new(px.max(0), py.max(0))).ok();
+
+    let mut x = px.max(0);
+    let mut y = py.max(0);
+    let monitor = win.current_monitor().ok().flatten().or_else(|| win.primary_monitor().ok().flatten());
+    if let Some(mon) = monitor {
+        let size = win.outer_size().unwrap_or(PhysicalSize::new(420, 380));
+        let mon_pos = mon.position();
+        let mon_size = mon.size();
+        let max_x = mon_pos.x + mon_size.width as i32 - size.width as i32;
+        let max_y = mon_pos.y + mon_size.height as i32 - size.height as i32;
+        x = x.clamp(mon_pos.x, max_x.max(mon_pos.x));
+        y = y.clamp(mon_pos.y, max_y.max(mon_pos.y));
+    }
+    win.set_position(PhysicalPosition::new(x, y)).ok();
     win.show().ok();
     win.set_focus().ok();
 }
 
 #[tauri::command]
-pub fn cancel_capture(app: AppHandle, state: State<CaptureState>) {
+pub async fn cancel_capture(app: AppHandle, state: State<'_, CaptureState>) -> Result<(), ()> {
     {
         let mut inner = state.0.lock().unwrap();
         if let Some(f) = inner.frozen.take() { std::fs::remove_file(f.frame_png).ok(); }
@@ -91,6 +104,7 @@ pub fn cancel_capture(app: AppHandle, state: State<CaptureState>) {
     for label in ["overlay", "composer"] {
         if let Some(w) = app.get_webview_window(label) { w.close().ok(); }
     }
+    Ok(())
 }
 
 #[tauri::command]
@@ -101,7 +115,7 @@ pub fn get_capture(state: State<CaptureState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn send_capture(app: AppHandle, state: State<CaptureState>, message: Option<String>) -> Result<(), String> {
+pub async fn send_capture(app: AppHandle, state: State<'_, CaptureState>, message: Option<String>) -> Result<(), String> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
     let path = state.0.lock().unwrap().capture.clone().ok_or("no capture")?;
     let wsl = crate::wslpath::to_wsl_path(&path.to_string_lossy())
