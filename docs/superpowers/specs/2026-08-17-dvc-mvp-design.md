@@ -42,8 +42,10 @@ The app has no main window; it lives in the system tray.
   borderless, always-on-top, undecorated webview with a dim layer and a
   drag-selection rectangle. Mouseup sends the rect to Rust.
   `// ponytail: monitor-under-cursor only; multi-monitor spanning later`
-- **Composer** — small always-on-top window positioned near the selected
-  region: capture preview, optional message input, quick-action buttons
+- **Composer** — small always-on-top window that remembers its last position
+  (persisted across restarts) and defaults to centering on the primary
+  monitor when there's no remembered position that's still on a connected
+  monitor: capture preview, optional message input, quick-action buttons
   (spec §9 — plain string inserts into the message field), target label,
   Cancel / Send.
 - **Tray menu** — Capture Region (hotkey label), Capture Screen (full-screen,
