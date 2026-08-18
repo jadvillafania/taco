@@ -1,4 +1,5 @@
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
+use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -57,5 +58,63 @@ fn relays_io_and_manages_registry() {
     child.wait().unwrap();
     assert!(!reg.exists(), "registry removed on exit");
     assert!(!sock.exists(), "socket removed on exit");
+    std::fs::remove_dir_all(&tmp).ok();
+}
+
+fn sock_send(sock: &std::path::Path, text: &str) -> String {
+    let mut s = UnixStream::connect(sock).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    s.write_all(format!(r#"{{"type":"send","id":"t1","text":"{text}"}}"#).as_bytes()).unwrap();
+    s.write_all(b"\n").unwrap();
+    let mut line = String::new();
+    std::io::BufReader::new(s).read_line(&mut line).unwrap();
+    line
+}
+
+#[test]
+fn injects_when_idle() {
+    let tmp = std::env::temp_dir().join(format!("dvc-e2e-inj-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let mut child = spawn_cat(&tmp);
+    let sock = tmp.join(format!("{}.sock", child.id()));
+    wait_for("socket", || sock.exists());
+    std::thread::sleep(Duration::from_millis(1100)); // let the idle window elapse
+
+    let resp = sock_send(&sock, "injected-hello");
+    assert!(resp.contains(r#""type":"ack"#), "got: {resp}");
+    let mut stdout = child.stdout.take().unwrap();
+    read_until(&mut stdout, "injected-hello"); // cat echoed the injected text
+
+    child.stdin.take().unwrap().write_all(&[0x04]).unwrap();
+    child.wait().unwrap();
+    std::fs::remove_dir_all(&tmp).ok();
+}
+
+#[test]
+fn refuses_while_user_is_typing() {
+    let tmp = std::env::temp_dir().join(format!("dvc-e2e-busy-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let mut child = spawn_cat(&tmp);
+    let sock = tmp.join(format!("{}.sock", child.id()));
+    wait_for("socket", || sock.exists());
+
+    let mut stdin = child.stdin.take().unwrap();
+    let typing = std::thread::spawn(move || {
+        for _ in 0..40 { // ~8s of keystrokes every 200ms: idle window never reached
+            if stdin.write_all(b"x").is_err() { return stdin; }
+            stdin.flush().ok();
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        stdin
+    });
+    std::thread::sleep(Duration::from_millis(500)); // let keystrokes register before sending
+    let resp = sock_send(&sock, "should-not-inject");
+    assert!(resp.contains(r#""type":"error"#) && resp.contains("user-typing"), "got: {resp}");
+
+    let mut stdin = typing.join().unwrap();
+    // newline first: EOF on a non-empty canonical-mode line only flushes it
+    stdin.write_all(b"\n").unwrap();
+    stdin.write_all(&[0x04]).unwrap();
+    child.wait().unwrap();
     std::fs::remove_dir_all(&tmp).ok();
 }

@@ -2,8 +2,9 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
 use std::os::unix::net::UnixListener;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use crate::protocol::{self, Msg};
 use crate::registry::{self, SessionInfo};
 
 pub const IDLE_WINDOW_MS: u64 = 1000;
@@ -150,6 +151,66 @@ pub fn run(args: &[String]) -> i32 {
     status
 }
 
-pub fn spawn_socket_listener(_listener: UnixListener, _shared: &Shared) {
-    // Task 6
+const IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+const ENTER_DELAY: Duration = Duration::from_millis(150);
+
+pub fn spawn_socket_listener(listener: UnixListener, shared: &Shared) {
+    let writer = shared.writer.clone();
+    let last = shared.last_input.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            handle_conn(stream, &writer, &last);
+        }
+    });
+}
+
+fn handle_conn(
+    stream: std::os::unix::net::UnixStream,
+    writer: &Arc<Mutex<Box<dyn Write + Send>>>,
+    last_input: &Arc<Mutex<Instant>>,
+) {
+    use std::io::BufRead;
+    let mut out = match stream.try_clone() { Ok(s) => s, Err(_) => return };
+    let mut line = String::new();
+    if std::io::BufReader::new(stream).read_line(&mut line).is_err() { return; }
+    let (id, text) = match protocol::parse(&line) {
+        Ok(Msg::Send { id, text }) => (id, text),
+        _ => {
+            out.write_all(protocol::to_line(&Msg::Error { id: "?".into(), reason: "bad-request".into() }).as_bytes()).ok();
+            return;
+        }
+    };
+    let reply = match inject(writer, last_input, &text) {
+        Ok(()) => Msg::Ack { id },
+        Err(reason) => Msg::Error { id, reason },
+    };
+    out.write_all(protocol::to_line(&reply).as_bytes()).ok();
+}
+
+/// Spec 27.4: wait for input-idle, write text, short delay, then Enter separately.
+fn inject(
+    writer: &Arc<Mutex<Box<dyn Write + Send>>>,
+    last_input: &Arc<Mutex<Instant>>,
+    text: &str,
+) -> Result<(), String> {
+    let start = Instant::now();
+    loop {
+        if last_input.lock().unwrap().elapsed() >= Duration::from_millis(IDLE_WINDOW_MS) {
+            break;
+        }
+        if start.elapsed() > IDLE_TIMEOUT {
+            return Err("user-typing".into());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    {
+        let mut w = writer.lock().unwrap();
+        w.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+        w.flush().ok();
+    }
+    std::thread::sleep(ENTER_DELAY);
+    let mut w = writer.lock().unwrap();
+    w.write_all(b"\r").map_err(|e| e.to_string())?;
+    w.flush().ok();
+    Ok(())
 }
