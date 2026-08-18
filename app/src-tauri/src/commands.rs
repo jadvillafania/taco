@@ -85,7 +85,8 @@ pub fn open_composer(app: &AppHandle) {
         .unwrap_or_default();
 
     let data_dir = crate::retention::data_dir(app);
-    let saved = crate::winpos::load(&data_dir).filter(|&(x, y)| crate::winpos::on_any_monitor(x, y, &monitors));
+    let saved = crate::winpos::load(&data_dir)
+        .filter(|&(x, y)| crate::winpos::rect_on_any_monitor(x, y, size.width as i32, size.height as i32, &monitors));
     let (mut x, mut y) = saved.unwrap_or_else(|| {
         // default: center of the primary monitor
         match win.primary_monitor().ok().flatten() {
@@ -109,6 +110,10 @@ pub fn open_composer(app: &AppHandle) {
         }
     }
     win.set_position(PhysicalPosition::new(x, y)).ok();
+    // Seed the tracked position with what we actually applied, so a Destroyed event fired before
+    // any Moved event (i.e. the user never dragged this composer) persists this position rather
+    // than a stale value left behind by a previous composer session.
+    *app.state::<LastComposerPos>().0.lock().unwrap() = Some((x, y));
 
     // track moves; persist on destroy
     let app2 = app.clone();
@@ -117,7 +122,8 @@ pub fn open_composer(app: &AppHandle) {
             *app2.state::<LastComposerPos>().0.lock().unwrap() = Some((p.x, p.y));
         }
         tauri::WindowEvent::Destroyed => {
-            if let Some((x, y)) = *app2.state::<LastComposerPos>().0.lock().unwrap() {
+            let pos = *app2.state::<LastComposerPos>().0.lock().unwrap();
+            if let Some((x, y)) = pos {
                 crate::winpos::save(&crate::retention::data_dir(&app2), x, y);
             }
         }

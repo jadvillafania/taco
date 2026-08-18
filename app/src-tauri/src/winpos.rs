@@ -18,6 +18,14 @@ pub fn on_any_monitor(x: i32, y: i32, monitors: &[(i32, i32, u32, u32)]) -> bool
     })
 }
 
+/// True only if BOTH the top-left corner (x, y) and the bottom-right corner
+/// (x + width - 1, y + height - 1) of a `width` x `height` window anchored at (x, y) land on
+/// some monitor. Guards against restoring a remembered top-left that leaves most of the window
+/// off-screen (e.g. x near a monitor's right edge).
+pub fn rect_on_any_monitor(x: i32, y: i32, width: i32, height: i32, monitors: &[(i32, i32, u32, u32)]) -> bool {
+    on_any_monitor(x, y, monitors) && on_any_monitor(x + width - 1, y + height - 1, monitors)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,5 +90,25 @@ mod tests {
         let monitors = [(0, 0, 1920, 1080)];
         assert!(!on_any_monitor(1920, 100, &monitors));
         assert!(!on_any_monitor(100, 1080, &monitors));
+    }
+
+    #[test]
+    fn rect_on_any_monitor_true_when_fully_inside() {
+        let monitors = [(0, 0, 1920, 1080)];
+        assert!(rect_on_any_monitor(100, 100, 420, 380, &monitors));
+    }
+
+    #[test]
+    fn rect_on_any_monitor_false_when_bottom_right_off_screen() {
+        let monitors = [(0, 0, 1920, 1080)];
+        // top-left (1900, 100) is on the monitor, but the bottom-right corner at
+        // x + width - 1 = 2319 is well past the 1920px-wide monitor.
+        assert!(!rect_on_any_monitor(1900, 100, 420, 380, &monitors));
+    }
+
+    #[test]
+    fn rect_on_any_monitor_false_when_top_left_off_screen() {
+        let monitors = [(0, 0, 1920, 1080)];
+        assert!(!rect_on_any_monitor(-50, 100, 420, 380, &monitors));
     }
 }
