@@ -2,6 +2,7 @@
 import Overlay from "./windows/Overlay.vue";
 import Composer from "./windows/Composer.vue";
 import History from "./windows/History.vue";
+import Settings from "./windows/Settings.vue";
 const win = new URLSearchParams(location.search).get("window");
 </script>
 
@@ -9,6 +10,7 @@ const win = new URLSearchParams(location.search).get("window");
   <Overlay v-if="win === 'overlay'" />
   <Composer v-else-if="win === 'composer'" />
   <History v-else-if="win === 'history'" />
+  <Settings v-else-if="win === 'settings'" />
 </template>
 
 <style>

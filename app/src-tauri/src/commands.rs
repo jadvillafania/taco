@@ -199,7 +199,8 @@ pub async fn send_capture(
     let path = state.0.lock().unwrap().capture.clone().ok_or("no capture")?;
     let wsl = crate::wslpath::to_wsl_path(&path.to_string_lossy())
         .ok_or("capture path is not on a Windows drive")?;
-    let payload = crate::payload::build_payload(message.as_deref(), &wsl);
+    let default_instruction = crate::settings::load(&crate::retention::data_dir(&app)).default_instruction;
+    let payload = crate::payload::build_payload(message.as_deref(), &wsl, &default_instruction);
 
     if let Some(s) = &session {
         match crate::tier1::send_via_shim(&s.distro, &s.sid, &payload) {

@@ -12,6 +12,7 @@ mod commands;
 mod deployer;
 mod history;
 mod sessions;
+mod settings;
 mod tier1;
 mod winpos;
 
@@ -52,7 +53,9 @@ pub fn run() {
             history::list_captures,
             history::resend_capture,
             history::delete_capture,
-            history::clear_captures
+            history::clear_captures,
+            settings::get_settings,
+            settings::set_settings
         ])
         .manage(capture::CaptureState(Default::default()))
         .manage(commands::LastComposerPos(Default::default()))
@@ -91,13 +94,14 @@ pub fn run() {
                 );
             }
 
+            let retention_hours = crate::settings::load(&crate::retention::data_dir(app.handle())).retention_hours;
             let captures = crate::retention::data_dir(app.handle()).join("captures");
             std::thread::spawn(move || {
                 let _ = crate::retention::sweep(
                     &captures,
-                    std::time::Duration::from_secs(24 * 3600),
+                    std::time::Duration::from_secs(retention_hours * 3600),
                     std::time::SystemTime::now(),
-                ); // ponytail: fixed 24h retention; settings UI when someone asks
+                );
             });
 
             let region = MenuItem::with_id(
@@ -107,6 +111,7 @@ pub fn run() {
             let window = MenuItem::with_id(app, "capture_window", "Capture Active Window\tCtrl+Alt+Space", true, None::<&str>)?;
             let clip = MenuItem::with_id(app, "capture_clipboard", "Send Clipboard Image\tCtrl+Alt+V", true, None::<&str>)?;
             let history = MenuItem::with_id(app, "history", "Capture History…", true, None::<&str>)?;
+            let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
             let install_shim = MenuItem::with_id(app, "install_shim", "Install WSL Shim…", true, None::<&str>)?;
             let remove_shim = MenuItem::with_id(app, "remove_shim", "Remove WSL Shim", true, None::<&str>)?;
             use tauri_plugin_autostart::ManagerExt;
@@ -114,7 +119,7 @@ pub fn run() {
             let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, auto_on, None::<&str>)?;
             let autostart_handle = autostart.clone();
             let quit = MenuItem::with_id(app, "quit", "Exit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&region, &screen, &window, &clip, &history, &install_shim, &remove_shim, &autostart, &quit])?;
+            let menu = Menu::with_items(app, &[&region, &screen, &window, &clip, &history, &settings, &install_shim, &remove_shim, &autostart, &quit])?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Developer Visual Companion")
@@ -130,6 +135,15 @@ pub fn run() {
                             tauri::WebviewWindowBuilder::new(app, "history", tauri::WebviewUrl::App("index.html?window=history".into()))
                                 .title("Capture History")
                                 .inner_size(560.0, 480.0)
+                                .build()
+                                .ok();
+                        }
+                    }
+                    "settings" => {
+                        if app.get_webview_window("settings").is_none() {
+                            tauri::WebviewWindowBuilder::new(app, "settings", tauri::WebviewUrl::App("index.html?window=settings".into()))
+                                .title("Settings")
+                                .inner_size(420.0, 280.0)
                                 .build()
                                 .ok();
                         }
