@@ -104,13 +104,14 @@ pub fn run() {
             use tauri_plugin_autostart::ManagerExt;
             let auto_on = app.autolaunch().is_enabled().unwrap_or(false);
             let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, auto_on, None::<&str>)?;
+            let autostart_handle = autostart.clone();
             let quit = MenuItem::with_id(app, "quit", "Exit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&region, &screen, &window, &clip, &install_shim, &remove_shim, &autostart, &quit])?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Developer Visual Companion")
                 .menu(&menu)
-                .on_menu_event(|app, event| match event.id().as_ref() {
+                .on_menu_event(move |app, event| match event.id().as_ref() {
                     "quit" => app.exit(0),
                     "capture_region" => crate::commands::start_region_capture(app),
                     "capture_screen" => crate::commands::start_screen_capture(app),
@@ -147,9 +148,16 @@ pub fn run() {
                     "autostart" => {
                         use tauri_plugin_autostart::ManagerExt;
                         let al = app.autolaunch();
-                        let res = if al.is_enabled().unwrap_or(false) { al.disable() } else { al.enable() };
-                        if let Err(e) = res {
-                            crate::commands::notify(app, "Autostart change failed", &e.to_string());
+                        let was_enabled = al.is_enabled().unwrap_or(false);
+                        let res = if was_enabled { al.disable() } else { al.enable() };
+                        match res {
+                            Ok(()) => {
+                                let new_state = !was_enabled;
+                                let _ = autostart_handle.set_checked(new_state);
+                            }
+                            Err(e) => {
+                                crate::commands::notify(app, "Autostart change failed", &e.to_string());
+                            }
                         }
                     }
                     _ => {}
