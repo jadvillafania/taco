@@ -30,4 +30,5 @@ image = "0.25.10"
 chrono = "0.4.45"
 tauri-plugin-dialog = "2.7.2"
 windows = { version = "0.62.2", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Graphics_Dwm"] }
+tauri-plugin-autostart = "2.5.1"
 

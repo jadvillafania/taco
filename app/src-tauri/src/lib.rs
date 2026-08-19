@@ -1,5 +1,5 @@
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{Menu, MenuItem, CheckMenuItem},
     tray::TrayIconBuilder,
     RunEvent,
 };
@@ -38,6 +38,7 @@ pub fn run() {
                 })
                 .build(),
         )
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .invoke_handler(tauri::generate_handler![
             commands::get_frame,
             commands::region_selected,
@@ -100,8 +101,11 @@ pub fn run() {
             let clip = MenuItem::with_id(app, "capture_clipboard", "Send Clipboard Image\tCtrl+Alt+V", true, None::<&str>)?;
             let install_shim = MenuItem::with_id(app, "install_shim", "Install WSL Shim…", true, None::<&str>)?;
             let remove_shim = MenuItem::with_id(app, "remove_shim", "Remove WSL Shim", true, None::<&str>)?;
+            use tauri_plugin_autostart::ManagerExt;
+            let auto_on = app.autolaunch().is_enabled().unwrap_or(false);
+            let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, auto_on, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Exit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&region, &screen, &window, &clip, &install_shim, &remove_shim, &quit])?;
+            let menu = Menu::with_items(app, &[&region, &screen, &window, &clip, &install_shim, &remove_shim, &autostart, &quit])?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Developer Visual Companion")
@@ -139,6 +143,14 @@ pub fn run() {
                                 Err(e) => crate::commands::notify(&app, "Shim removal failed", &e),
                             }
                         });
+                    }
+                    "autostart" => {
+                        use tauri_plugin_autostart::ManagerExt;
+                        let al = app.autolaunch();
+                        let res = if al.is_enabled().unwrap_or(false) { al.disable() } else { al.enable() };
+                        if let Err(e) = res {
+                            crate::commands::notify(app, "Autostart change failed", &e.to_string());
+                        }
                     }
                     _ => {}
                 })
