@@ -98,15 +98,16 @@ async function save() {
   <div class="settings">
     <label>
       Keep captures for (hours)
-      <input type="number" min="1" v-model.number="retentionHours" />
+      <input class="input" type="number" min="1" v-model.number="retentionHours" />
     </label>
     <label>
       Default instruction (when message is empty)
-      <textarea rows="3" v-model="defaultInstruction" />
+      <textarea class="textarea" rows="3" v-model="defaultInstruction" />
     </label>
     <label>
       Region capture hotkey
       <input
+        class="input"
         readonly
         :value="recording === 'region' ? 'Press keys…' : hotkeyRegion"
         :class="{ recording: recording === 'region' }"
@@ -118,6 +119,7 @@ async function save() {
     <label>
       Active window hotkey
       <input
+        class="input"
         readonly
         :value="recording === 'window' ? 'Press keys…' : hotkeyWindow"
         :class="{ recording: recording === 'window' }"
@@ -129,6 +131,7 @@ async function save() {
     <label>
       Clipboard image hotkey
       <input
+        class="input"
         readonly
         :value="recording === 'clipboard' ? 'Press keys…' : hotkeyClipboard"
         :class="{ recording: recording === 'clipboard' }"
@@ -138,22 +141,24 @@ async function save() {
       />
     </label>
     <p v-if="recordHint" class="hint">{{ recordHint }}</p>
-    <p v-if="error" class="error">{{ error }}</p>
+    <p v-if="error" class="error-text">{{ error }}</p>
     <div class="buttons">
-      <button @click="getCurrentWindow().close()">Cancel</button>
-      <button class="primary" @click="save">{{ saved ? "Saved" : "Save" }}</button>
+      <button class="btn btn-quiet" @click="getCurrentWindow().close()">Cancel</button>
+      <button class="btn btn-primary" @click="save">{{ saved ? "Saved" : "Save" }}</button>
     </div>
   </div>
 </template>
 
 <style scoped>
-.settings { display: flex; flex-direction: column; gap: 12px; padding: 14px; font-family: system-ui; height: 100vh; box-sizing: border-box; }
-label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-textarea { resize: none; }
-.error { font-size: 12px; color: #c00; margin: 0; }
-input[readonly] { cursor: pointer; background: #fafafa; }
-.recording { outline: 2px solid #e11; background: #fff; }
-.hint { font-size: 12px; color: #a60; margin: 0; }
+.settings { display: flex; flex-direction: column; gap: 12px; padding: 14px; font-family: var(--font-sans); background: var(--bg); height: 100vh; box-sizing: border-box; }
+label {
+  display: flex; flex-direction: column; gap: 5px;
+  font-size: 11.5px; font-weight: 600; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--muted);
+}
+.settings input, .settings textarea { text-transform: none; }
+input[readonly] { cursor: pointer; background: var(--raised); font-family: var(--font-mono); font-size: 12px; }
+.recording { outline: 2px solid var(--accent); background: var(--raised); }
+.hint { font-size: 12px; color: var(--accent); margin: 0; }
 .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
-.primary { font-weight: 600; }
 </style>

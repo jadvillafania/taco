@@ -47,9 +47,9 @@ function stamp(e: Entry) {
   <div class="history">
     <div class="bar">
       <span>{{ entries.length }} captures</span>
-      <button @click="clearAll" :disabled="!entries.length">Clear all</button>
+      <button class="btn btn-danger" @click="clearAll" :disabled="!entries.length">Clear all</button>
     </div>
-    <p v-if="error" class="error">{{ error }}</p>
+    <p v-if="error" class="error-text">{{ error }}</p>
     <p v-if="!entries.length" class="empty">No captures.</p>
     <div class="grid">
       <div v-for="e in entries" :key="e.path" class="card">
@@ -64,11 +64,13 @@ function stamp(e: Entry) {
 </template>
 
 <style scoped>
-.history { padding: 10px; font-family: system-ui; height: 100vh; box-sizing: border-box; overflow-y: auto; }
-.bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.empty { color: #666; }
-.error { font-size: 12px; color: #c00; margin: 0; }
+.history { padding: 14px; font-family: var(--font-sans); background: var(--bg); height: 100vh; box-sizing: border-box; overflow-y: auto; }
+.bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 12px; color: var(--muted); }
+.empty { color: var(--muted); }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
-.card img { width: 100%; height: 100px; object-fit: cover; border: 1px solid #ccc; cursor: pointer; }
-.meta { display: flex; justify-content: space-between; font-size: 11px; color: #666; }
+.card { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--raised); }
+.card img { width: 100%; height: 100px; object-fit: cover; cursor: pointer; display: block; border: none; }
+.meta { display: flex; justify-content: space-between; align-items: center; padding: 6px 9px; font: 500 11px var(--font-mono); color: var(--muted); }
+.meta button { background: transparent; border: none; color: var(--danger); font: 500 11px var(--font-sans); cursor: pointer; padding: 0; }
+.btn-danger { font-size: 12px; padding: 4px 10px; }
 </style>

@@ -131,8 +131,10 @@ async function send() {
 
 <template>
   <div class="composer">
-    <img v-if="!annotating" :src="previewSrc" class="preview" @click="startAnnotate" title="Click to annotate" />
-    <div v-else class="canvas-wrap">
+    <div v-if="!annotating" class="preview-frame">
+      <img :src="previewSrc" class="preview" @click="startAnnotate" title="Click to annotate" />
+    </div>
+    <div v-else class="canvas-wrap preview-frame">
       <canvas
         ref="canvasEl"
         class="canvas"
@@ -151,32 +153,42 @@ async function send() {
     <div class="actions">
       <button v-for="a in QUICK_ACTIONS" :key="a.label" @click="message = a.text">{{ a.label }}</button>
     </div>
-    <textarea v-model="message" rows="3" placeholder="Optional message… (default: analyze in current context)" />
-    <select v-model="selected" class="target">
+    <textarea v-model="message" rows="3" class="textarea" placeholder="Optional message… (default: analyze in current context)" />
+    <select v-model="selected" class="selectbox">
       <option v-for="(s, i) in sessions" :key="s.sid" :value="String(i)">
         Claude Code: {{ s.project }} ({{ s.distro }} {{ s.cwd }})
       </option>
       <option value="">Clipboard — paste manually</option>
     </select>
-    <p v-if="error" class="error">{{ error }} — Send again to retry.</p>
+    <p v-if="error" class="error-text">{{ error }} — Send again to retry.</p>
     <div class="buttons">
-      <button @click="invoke('cancel_capture')">Cancel</button>
-      <button class="primary" :disabled="sending" @click="send">Send</button>
+      <button class="btn btn-quiet" @click="invoke('cancel_capture')">Cancel</button>
+      <button class="btn btn-primary" :disabled="sending" @click="send">Send</button>
     </div>
   </div>
 </template>
 
 <style scoped>
-.composer { display: flex; flex-direction: column; gap: 8px; padding: 10px; height: 100vh; box-sizing: border-box; font-family: system-ui; }
-.preview { flex: 1; min-height: 160px; width: 100%; object-fit: contain; border: 1px solid #ccc; cursor: pointer; }
-.canvas-wrap { flex: 1; min-height: 160px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.composer { display: flex; flex-direction: column; gap: 10px; padding: 14px; height: 100vh; box-sizing: border-box; background: var(--bg); font-family: var(--font-sans); }
+.preview-frame { position: relative; flex: 1; min-height: 160px; display: flex; }
+.preview-frame::before, .preview-frame::after {
+  content: ""; position: absolute; width: 14px; height: 14px; border: 2.5px solid var(--accent); pointer-events: none; z-index: 1;
+}
+.preview-frame::before { top: -2px; left: -2px; border-right: none; border-bottom: none; }
+.preview-frame::after { bottom: -2px; right: -2px; border-left: none; border-top: none; }
+.preview { width: 100%; height: 100%; object-fit: contain; border: 1px solid var(--line); cursor: pointer; }
+.canvas-wrap { display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .canvas { max-width: 100%; max-height: 100%; cursor: crosshair; }
-.tools { display: flex; gap: 6px; }
-.tools .on { outline: 2px solid #e11; }
+.tools { display: inline-flex; background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 3px; gap: 2px; }
+.tools button { background: transparent; border: none; border-radius: 6px; padding: 4px 10px; color: var(--muted); cursor: pointer; font: 500 12px var(--font-sans); }
+.tools button.on { background: var(--bg); color: var(--accent); }
+.tools button:disabled { opacity: .45; cursor: default; }
 .actions { display: flex; gap: 6px; flex-wrap: wrap; }
-textarea { resize: none; }
-.target { font-size: 12px; color: #666; margin: 0; }
-.error { font-size: 12px; color: #c00; margin: 0; }
+.actions button {
+  background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 999px;
+  font: 500 12px var(--font-sans); padding: 4px 11px; cursor: pointer;
+}
+.actions button:hover { color: var(--text); border-color: var(--muted); }
+.selectbox { width: 100%; font-family: var(--font-sans); }
 .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
-.primary { font-weight: 600; }
 </style>
