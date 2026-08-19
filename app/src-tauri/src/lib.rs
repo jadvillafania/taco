@@ -91,7 +91,7 @@ pub fn run() {
             let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, auto_on, None::<&str>)?;
             let autostart_handle = autostart.clone();
             let quit = MenuItem::with_id(app, "quit", "Exit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&region, &screen, &window, &clip, &open_comp, &history, &settings, &install_shim, &remove_shim, &autostart, &quit])?;
+            let menu = Menu::with_items(app, &[&open_comp, &region, &screen, &window, &clip, &history, &settings, &install_shim, &remove_shim, &autostart, &quit])?;
 
             app.manage(crate::hotkeys::TrayLabels {
                 region: region.clone(),
