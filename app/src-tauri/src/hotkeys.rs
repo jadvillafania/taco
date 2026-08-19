@@ -29,11 +29,11 @@ pub fn apply(app: &tauri::AppHandle, s: &crate::settings::Settings) {
 
     let defaults = crate::settings::Settings::default();
     let resolve = |wanted: &str, fallback: &str, label: &str| -> (Shortcut, String) {
-        let (sc, wanted_valid) = match parse_shortcut(wanted) {
-            Ok(sc) => (sc, true),
+        let (sc, wanted_valid, mut winning) = match parse_shortcut(wanted) {
+            Ok(sc) => (sc, true, wanted.to_string()),
             Err(e) => {
                 crate::commands::notify(app, "Hotkey invalid", &format!("{label}: {e} — using {fallback}"));
-                (parse_shortcut(fallback).expect("default hotkey parses"), false)
+                (parse_shortcut(fallback).expect("default hotkey parses"), false, fallback.to_string())
             }
         };
         if gs.register(sc).is_err() {
@@ -45,10 +45,12 @@ pub fn apply(app: &tauri::AppHandle, s: &crate::settings::Settings) {
                 );
                 let fb = parse_shortcut(fallback).expect("default hotkey parses");
                 gs.register(fb).ok(); // if even the default is taken, the tray menu still works
-                return (fb, fallback.to_string());
+                winning = fallback.to_string();
+                return (fb, winning);
             }
             // wanted was invalid syntax (already notified above); sc IS the fallback and its
             // registration just failed too — don't retry the same registration a second time.
+            // `winning` is already `fallback` from the parse-fail branch above.
             crate::commands::notify(
                 app,
                 "Hotkey unavailable",
@@ -56,9 +58,9 @@ pub fn apply(app: &tauri::AppHandle, s: &crate::settings::Settings) {
             );
             // sc failed to register, but the label still shows the default binding — the tray
             // click handler falls through to nothing for this action until settings are fixed.
-            return (sc, fallback.to_string());
+            return (sc, winning);
         }
-        (sc, wanted.to_string())
+        (sc, winning)
     };
 
     let (region, region_label) = resolve(&s.hotkey_region, &defaults.hotkey_region, "Capture Region");
