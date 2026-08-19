@@ -5,20 +5,38 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 const retentionHours = ref(24);
 const defaultInstruction = ref("");
+const hotkeyRegion = ref("");
+const hotkeyWindow = ref("");
+const hotkeyClipboard = ref("");
 const saved = ref(false);
 const error = ref("");
 
 onMounted(async () => {
-  const s = await invoke<{ retention_hours: number; default_instruction: string }>("get_settings");
+  const s = await invoke<{
+    retention_hours: number;
+    default_instruction: string;
+    hotkey_region: string;
+    hotkey_window: string;
+    hotkey_clipboard: string;
+  }>("get_settings");
   retentionHours.value = s.retention_hours;
   defaultInstruction.value = s.default_instruction;
+  hotkeyRegion.value = s.hotkey_region;
+  hotkeyWindow.value = s.hotkey_window;
+  hotkeyClipboard.value = s.hotkey_clipboard;
 });
 
 async function save() {
   error.value = "";
   try {
     await invoke("set_settings", {
-      settings: { retention_hours: Math.max(1, retentionHours.value), default_instruction: defaultInstruction.value },
+      settings: {
+        retention_hours: Math.max(1, retentionHours.value),
+        default_instruction: defaultInstruction.value,
+        hotkey_region: hotkeyRegion.value,
+        hotkey_window: hotkeyWindow.value,
+        hotkey_clipboard: hotkeyClipboard.value,
+      },
     });
     saved.value = true;
     setTimeout(() => getCurrentWindow().close(), 400);
@@ -37,6 +55,18 @@ async function save() {
     <label>
       Default instruction (when message is empty)
       <textarea rows="3" v-model="defaultInstruction" />
+    </label>
+    <label>
+      Region capture hotkey
+      <input v-model="hotkeyRegion" />
+    </label>
+    <label>
+      Active window hotkey
+      <input v-model="hotkeyWindow" />
+    </label>
+    <label>
+      Clipboard image hotkey
+      <input v-model="hotkeyClipboard" />
     </label>
     <p v-if="error" class="error">{{ error }}</p>
     <div class="buttons">

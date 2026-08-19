@@ -11,6 +11,7 @@ mod capture;
 mod commands;
 mod deployer;
 mod history;
+mod hotkeys;
 mod sessions;
 mod settings;
 mod tier1;
@@ -25,15 +26,14 @@ pub fn run() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
-                    use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
                     if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                        let window_sc = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::Space);
-                        let clip_sc = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyV);
-                        if shortcut == &window_sc {
+                        use tauri::Manager;
+                        let Some(hk) = app.try_state::<crate::hotkeys::Hotkeys>() else { return };
+                        if shortcut == &*hk.window.lock().unwrap() {
                             crate::commands::start_window_capture(app);
-                        } else if shortcut == &clip_sc {
+                        } else if shortcut == &*hk.clipboard.lock().unwrap() {
                             crate::commands::start_clipboard_capture(app);
-                        } else {
+                        } else if shortcut == &*hk.region.lock().unwrap() {
                             crate::commands::start_region_capture(app);
                         }
                     }
@@ -60,41 +60,10 @@ pub fn run() {
         .manage(capture::CaptureState(Default::default()))
         .manage(commands::ComposerGeom::default())
         .setup(|app| {
-            use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
-            if let Err(e) = app
-                .global_shortcut()
-                .register(Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space))
-            {
-                // Another app may already hold this hotkey. Don't let that kill the whole app —
-                // the tray menu still works, so notify and keep going.
-                crate::commands::notify(
-                    app.handle(),
-                    "Hotkey unavailable",
-                    &format!("Ctrl+Shift+Space is taken by another app — use the tray menu ({e})"),
-                );
-            }
-            if let Err(e) = app
-                .global_shortcut()
-                .register(Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::Space))
-            {
-                crate::commands::notify(
-                    app.handle(),
-                    "Hotkey unavailable",
-                    &format!("Ctrl+Alt+Space is taken by another app — use the tray menu ({e})"),
-                );
-            }
-            if let Err(e) = app
-                .global_shortcut()
-                .register(Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyV))
-            {
-                crate::commands::notify(
-                    app.handle(),
-                    "Hotkey unavailable",
-                    &format!("Ctrl+Alt+V is taken by another app — use the tray menu ({e})"),
-                );
-            }
+            let s = crate::settings::load(&crate::retention::data_dir(app.handle()));
+            crate::hotkeys::apply(app.handle(), &s);
 
-            let retention_hours = crate::settings::load(&crate::retention::data_dir(app.handle())).retention_hours;
+            let retention_hours = s.retention_hours;
             let captures = crate::retention::data_dir(app.handle()).join("captures");
             std::thread::spawn(move || {
                 let _ = crate::retention::sweep(
@@ -143,7 +112,7 @@ pub fn run() {
                         if app.get_webview_window("settings").is_none() {
                             tauri::WebviewWindowBuilder::new(app, "settings", tauri::WebviewUrl::App("index.html?window=settings".into()))
                                 .title("Settings")
-                                .inner_size(420.0, 280.0)
+                                .inner_size(420.0, 460.0)
                                 .build()
                                 .ok();
                         }

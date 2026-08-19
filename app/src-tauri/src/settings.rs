@@ -5,6 +5,9 @@ use std::path::Path;
 pub struct Settings {
     pub retention_hours: u64,
     pub default_instruction: String,
+    pub hotkey_region: String,
+    pub hotkey_window: String,
+    pub hotkey_clipboard: String,
 }
 
 impl Default for Settings {
@@ -12,6 +15,9 @@ impl Default for Settings {
         Settings {
             retention_hours: 24,
             default_instruction: crate::payload::DEFAULT_INSTRUCTION.to_string(),
+            hotkey_region: "Ctrl+Shift+Space".into(),
+            hotkey_window: "Ctrl+Alt+Space".into(),
+            hotkey_clipboard: "Ctrl+Alt+V".into(),
         }
     }
 }
@@ -35,7 +41,9 @@ pub fn get_settings(app: tauri::AppHandle) -> Settings {
 
 #[tauri::command]
 pub fn set_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String> {
-    save(&crate::retention::data_dir(&app), &settings).map_err(|e| e.to_string())
+    save(&crate::retention::data_dir(&app), &settings).map_err(|e| e.to_string())?;
+    crate::hotkeys::apply(&app, &settings);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -51,9 +59,12 @@ mod tests {
         let s = load(&dir);
         assert_eq!(s.retention_hours, 24);
         assert!(s.default_instruction.contains("Analyze this screenshot"));
+        assert_eq!(s.hotkey_region, "Ctrl+Shift+Space");
+        assert_eq!(s.hotkey_window, "Ctrl+Alt+Space");
+        assert_eq!(s.hotkey_clipboard, "Ctrl+Alt+V");
 
         // saved values come back
-        save(&dir, &Settings { retention_hours: 72, default_instruction: "Look at this.".into() }).unwrap();
+        save(&dir, &Settings { retention_hours: 72, default_instruction: "Look at this.".into(), ..Default::default() }).unwrap();
         let s = load(&dir);
         assert_eq!(s.retention_hours, 72);
         assert_eq!(s.default_instruction, "Look at this.");
