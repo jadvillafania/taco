@@ -86,6 +86,28 @@ pub fn foreground_title() -> Option<String> {
     }
 }
 
+/// Frame bounds (l, t, r, b) of the foreground window, DWM-accurate (no drop-shadow margins).
+pub fn foreground_rect() -> Option<(i32, i32, i32, i32)> {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return None;
+        }
+        let mut rect = RECT::default();
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut rect as *mut _ as *mut core::ffi::c_void,
+            std::mem::size_of::<RECT>() as u32,
+        )
+        .ok()?;
+        Some((rect.left, rect.top, rect.right, rect.bottom))
+    }
+}
+
 #[tauri::command]
 pub fn list_sessions_cmd(state: tauri::State<crate::capture::CaptureState>) -> Vec<Session> {
     let title = state.0.lock().unwrap().focus_title.clone();
