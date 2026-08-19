@@ -240,3 +240,16 @@ pub fn start_screen_capture(app: &AppHandle) {
         Err(e) => notify(app, "Capture failed", &e),
     }
 }
+
+pub fn start_window_capture(app: &AppHandle) {
+    let focus = crate::sessions::foreground_title();
+    supersede_pending_capture(app);
+    app.state::<CaptureState>().0.lock().unwrap().focus_title = focus;
+    match capture::save_active_window(app) {
+        Ok(path) => {
+            app.state::<CaptureState>().0.lock().unwrap().capture = Some(path);
+            open_composer(app);
+        }
+        Err(e) => notify(app, "Capture failed", &e),
+    }
+}
