@@ -177,7 +177,7 @@ async function send() {
 .preview-frame::before { top: -2px; left: -2px; border-right: none; border-bottom: none; }
 .preview-frame::after { bottom: -2px; right: -2px; border-left: none; border-top: none; }
 .preview { width: 100%; height: 100%; object-fit: contain; border: 1px solid var(--line); cursor: pointer; }
-.canvas-wrap { display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.canvas-wrap { display: flex; align-items: center; justify-content: center; }
 .canvas { max-width: 100%; max-height: 100%; cursor: crosshair; }
 .tools { display: inline-flex; background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 3px; gap: 2px; }
 .tools button { background: transparent; border: none; border-radius: 6px; padding: 4px 10px; color: var(--muted); cursor: pointer; font: 500 12px var(--font-sans); }

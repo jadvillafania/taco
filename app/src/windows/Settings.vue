@@ -96,15 +96,15 @@ async function save() {
 
 <template>
   <div class="settings">
-    <label>
+    <label class="field-label">
       Keep captures for (hours)
       <input class="input" type="number" min="1" v-model.number="retentionHours" />
     </label>
-    <label>
+    <label class="field-label">
       Default instruction (when message is empty)
       <textarea class="textarea" rows="3" v-model="defaultInstruction" />
     </label>
-    <label>
+    <label class="field-label">
       Region capture hotkey
       <input
         class="input"
@@ -116,7 +116,7 @@ async function save() {
         @keydown="onRecordKey($event, 'region')"
       />
     </label>
-    <label>
+    <label class="field-label">
       Active window hotkey
       <input
         class="input"
@@ -128,7 +128,7 @@ async function save() {
         @keydown="onRecordKey($event, 'window')"
       />
     </label>
-    <label>
+    <label class="field-label">
       Clipboard image hotkey
       <input
         class="input"
@@ -151,12 +151,8 @@ async function save() {
 
 <style scoped>
 .settings { display: flex; flex-direction: column; gap: 12px; padding: 14px; font-family: var(--font-sans); background: var(--bg); height: 100vh; box-sizing: border-box; }
-label {
-  display: flex; flex-direction: column; gap: 5px;
-  font-size: 11.5px; font-weight: 600; letter-spacing: .04em;
-  text-transform: uppercase; color: var(--muted);
-}
-.settings input, .settings textarea { text-transform: none; }
+label { display: flex; flex-direction: column; gap: 5px; }
+.settings input, .settings textarea { text-transform: none; letter-spacing: normal; }
 input[readonly] { cursor: pointer; background: var(--raised); font-family: var(--font-mono); font-size: 12px; }
 .recording { outline: 2px solid var(--accent); background: var(--raised); }
 .hint { font-size: 12px; color: var(--accent); margin: 0; }
