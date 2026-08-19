@@ -46,6 +46,7 @@ pub fn run() {
             commands::cancel_capture,
             commands::get_capture,
             commands::send_capture,
+            commands::save_annotated,
             sessions::list_sessions_cmd,
             history::list_captures,
             history::resend_capture,

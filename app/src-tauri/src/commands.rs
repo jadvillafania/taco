@@ -266,3 +266,35 @@ pub fn start_clipboard_capture(app: &AppHandle) {
         Err(e) => notify(app, "Clipboard capture failed", &e),
     }
 }
+
+pub fn decode_png_data_url(data_url: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    let b64 = data_url
+        .strip_prefix("data:image/png;base64,")
+        .ok_or("expected a PNG data URL")?;
+    base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn save_annotated(state: State<CaptureState>, data_url: String) -> Result<(), String> {
+    let path = state.0.lock().unwrap().capture.clone().ok_or("no capture")?;
+    let bytes = decode_png_data_url(&data_url)?;
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_png_data_url_and_rejects_junk() {
+        // 1x1 transparent PNG
+        let b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+        let bytes = decode_png_data_url(&format!("data:image/png;base64,{b64}")).unwrap();
+        assert_eq!(&bytes[1..4], b"PNG");
+        assert!(decode_png_data_url("data:text/plain;base64,aGk=").is_err());
+        assert!(decode_png_data_url("not a data url").is_err());
+    }
+}
