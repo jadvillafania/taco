@@ -6,7 +6,7 @@ use crate::capture::{self, CaptureState};
 /// overlay/composer window and drop whatever pending state it was holding, so we never leave an
 /// orphaned frozen frame or pending capture file behind, and a stale overlay never outlives the
 /// capture it belonged to.
-fn supersede_pending_capture(app: &AppHandle) {
+pub fn supersede_pending_capture(app: &AppHandle) {
     if let Some(o) = app.get_webview_window("overlay") {
         o.close().ok();
         if let Some(f) = app.state::<CaptureState>().0.lock().unwrap().frozen.take() {

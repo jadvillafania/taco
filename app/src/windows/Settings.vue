@@ -6,6 +6,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 const retentionHours = ref(24);
 const defaultInstruction = ref("");
 const saved = ref(false);
+const error = ref("");
 
 onMounted(async () => {
   const s = await invoke<{ retention_hours: number; default_instruction: string }>("get_settings");
@@ -14,11 +15,16 @@ onMounted(async () => {
 });
 
 async function save() {
-  await invoke("set_settings", {
-    settings: { retention_hours: Math.max(1, retentionHours.value), default_instruction: defaultInstruction.value },
-  });
-  saved.value = true;
-  setTimeout(() => getCurrentWindow().close(), 400);
+  error.value = "";
+  try {
+    await invoke("set_settings", {
+      settings: { retention_hours: Math.max(1, retentionHours.value), default_instruction: defaultInstruction.value },
+    });
+    saved.value = true;
+    setTimeout(() => getCurrentWindow().close(), 400);
+  } catch (e) {
+    error.value = String(e);
+  }
 }
 </script>
 
@@ -32,6 +38,7 @@ async function save() {
       Default instruction (when message is empty)
       <textarea rows="3" v-model="defaultInstruction" />
     </label>
+    <p v-if="error" class="error">{{ error }}</p>
     <div class="buttons">
       <button @click="getCurrentWindow().close()">Cancel</button>
       <button class="primary" @click="save">{{ saved ? "Saved" : "Save" }}</button>
@@ -43,6 +50,7 @@ async function save() {
 .settings { display: flex; flex-direction: column; gap: 12px; padding: 14px; font-family: system-ui; height: 100vh; box-sizing: border-box; }
 label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 textarea { resize: none; }
+.error { font-size: 12px; color: #c00; margin: 0; }
 .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
 .primary { font-weight: 600; }
 </style>

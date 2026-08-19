@@ -26,8 +26,13 @@ let drawing = false;
 async function startAnnotate() {
   annotating.value = true;
   await nextTick();
-  img.onload = redraw;
-  img.src = await invoke<string>("get_capture_data_url");
+  try {
+    img.onload = redraw;
+    img.src = await invoke<string>("get_capture_data_url");
+  } catch (e) {
+    error.value = String(e);
+    annotating.value = false;
+  }
 }
 
 function canvasPoint(e: MouseEvent) {

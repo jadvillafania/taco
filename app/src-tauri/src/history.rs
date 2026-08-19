@@ -66,7 +66,13 @@ pub async fn resend_capture(app: tauri::AppHandle, path: String) -> Result<(), S
     if !is_under(&captures_root(&app), &p) {
         return Err("not a capture file".into());
     }
-    app.state::<crate::capture::CaptureState>().0.lock().unwrap().capture = Some(p);
+    crate::commands::supersede_pending_capture(&app);
+    {
+        let state = app.state::<crate::capture::CaptureState>();
+        let mut inner = state.0.lock().unwrap();
+        inner.capture = Some(p);
+        inner.focus_title = None;
+    }
     if let Some(w) = app.get_webview_window("history") {
         w.close().ok();
     }
@@ -80,11 +86,20 @@ pub fn delete_capture(app: tauri::AppHandle, path: String) -> Result<(), String>
     if !is_under(&captures_root(&app), &p) {
         return Err("not a capture file".into());
     }
+    let state = app.state::<crate::capture::CaptureState>();
+    let pending = state.0.lock().unwrap().capture.clone();
+    if pending.as_deref() == Some(p.as_path()) {
+        return Err("capture is open in the composer".into());
+    }
     std::fs::remove_file(&p).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn clear_captures(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("composer") {
+        w.close().ok();
+    }
+    app.state::<crate::capture::CaptureState>().0.lock().unwrap().capture = None;
     let root = captures_root(&app);
     if root.exists() {
         std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
