@@ -1,7 +1,7 @@
 use tauri::{
     menu::{Menu, MenuItem, CheckMenuItem},
     tray::TrayIconBuilder,
-    RunEvent,
+    Manager, RunEvent,
 };
 
 mod wslpath;
@@ -10,6 +10,7 @@ mod retention;
 mod capture;
 mod commands;
 mod deployer;
+mod history;
 mod sessions;
 mod tier1;
 mod winpos;
@@ -45,7 +46,11 @@ pub fn run() {
             commands::cancel_capture,
             commands::get_capture,
             commands::send_capture,
-            sessions::list_sessions_cmd
+            sessions::list_sessions_cmd,
+            history::list_captures,
+            history::resend_capture,
+            history::delete_capture,
+            history::clear_captures
         ])
         .manage(capture::CaptureState(Default::default()))
         .manage(commands::LastComposerPos(Default::default()))
@@ -99,6 +104,7 @@ pub fn run() {
             let screen = MenuItem::with_id(app, "capture_screen", "Capture Screen", true, None::<&str>)?;
             let window = MenuItem::with_id(app, "capture_window", "Capture Active Window\tCtrl+Alt+Space", true, None::<&str>)?;
             let clip = MenuItem::with_id(app, "capture_clipboard", "Send Clipboard Image\tCtrl+Alt+V", true, None::<&str>)?;
+            let history = MenuItem::with_id(app, "history", "Capture History…", true, None::<&str>)?;
             let install_shim = MenuItem::with_id(app, "install_shim", "Install WSL Shim…", true, None::<&str>)?;
             let remove_shim = MenuItem::with_id(app, "remove_shim", "Remove WSL Shim", true, None::<&str>)?;
             use tauri_plugin_autostart::ManagerExt;
@@ -106,7 +112,7 @@ pub fn run() {
             let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, auto_on, None::<&str>)?;
             let autostart_handle = autostart.clone();
             let quit = MenuItem::with_id(app, "quit", "Exit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&region, &screen, &window, &clip, &install_shim, &remove_shim, &autostart, &quit])?;
+            let menu = Menu::with_items(app, &[&region, &screen, &window, &clip, &history, &install_shim, &remove_shim, &autostart, &quit])?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Developer Visual Companion")
@@ -117,6 +123,15 @@ pub fn run() {
                     "capture_screen" => crate::commands::start_screen_capture(app),
                     "capture_window" => crate::commands::start_window_capture(app),
                     "capture_clipboard" => crate::commands::start_clipboard_capture(app),
+                    "history" => {
+                        if app.get_webview_window("history").is_none() {
+                            tauri::WebviewWindowBuilder::new(app, "history", tauri::WebviewUrl::App("index.html?window=history".into()))
+                                .title("Capture History")
+                                .inner_size(560.0, 480.0)
+                                .build()
+                                .ok();
+                        }
+                    }
                     "install_shim" => {
                         use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
                         let app = app.clone();
