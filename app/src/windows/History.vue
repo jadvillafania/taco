@@ -12,9 +12,13 @@ async function refresh() {
 }
 onMounted(async () => {
   await refresh();
-  const w = getCurrentWindow();
-  await w.show();
-  await w.setFocus();
+  try {
+    const w = getCurrentWindow();
+    await w.show();
+    await w.setFocus();
+  } catch {
+    /* tray re-click force-shows */
+  }
 });
 
 async function resend(e: Entry) {

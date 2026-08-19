@@ -82,9 +82,13 @@ onMounted(async () => {
   hotkeyWindow.value = s.hotkey_window;
   hotkeyClipboard.value = s.hotkey_clipboard;
   loaded.value = snapshot();
-  const w = getCurrentWindow();
-  await w.show();
-  await w.setFocus();
+  try {
+    const w = getCurrentWindow();
+    await w.show();
+    await w.setFocus();
+  } catch {
+    /* tray re-click force-shows */
+  }
 });
 
 async function save() {
