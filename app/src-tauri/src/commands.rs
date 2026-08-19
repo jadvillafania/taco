@@ -284,6 +284,17 @@ pub fn save_annotated(state: State<CaptureState>, data_url: String) -> Result<()
     std::fs::write(&path, bytes).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn get_capture_data_url(state: State<CaptureState>) -> Result<String, String> {
+    use base64::Engine;
+    let path = state.0.lock().unwrap().capture.clone().ok_or("no capture")?;
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    Ok(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

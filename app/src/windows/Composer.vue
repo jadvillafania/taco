@@ -27,8 +27,7 @@ async function startAnnotate() {
   annotating.value = true;
   await nextTick();
   img.onload = redraw;
-  img.src = previewSrc.value;
-  if (img.complete) redraw();
+  img.src = await invoke<string>("get_capture_data_url");
 }
 
 function canvasPoint(e: MouseEvent) {
