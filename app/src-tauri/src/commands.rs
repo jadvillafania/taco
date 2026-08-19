@@ -114,13 +114,18 @@ pub fn open_composer(app: &AppHandle) {
         }
     };
 
+    let data_dir = crate::retention::data_dir(app);
+    let saved_size = crate::winpos::load_size(&data_dir);
+    if let Some((w, h)) = saved_size {
+        win.set_size(PhysicalSize::new(w, h)).ok();
+    }
+
     let size = win.outer_size().unwrap_or(PhysicalSize::new(420, 380));
     let monitors: Vec<(i32, i32, u32, u32)> = win
         .available_monitors()
         .map(|ms| ms.iter().map(|m| (m.position().x, m.position().y, m.size().width, m.size().height)).collect())
         .unwrap_or_default();
 
-    let data_dir = crate::retention::data_dir(app);
     let saved = crate::winpos::load(&data_dir)
         .filter(|&(x, y)| crate::winpos::rect_on_any_monitor(x, y, size.width as i32, size.height as i32, &monitors));
     let (mut x, mut y) = saved.unwrap_or_else(|| {
@@ -147,17 +152,17 @@ pub fn open_composer(app: &AppHandle) {
     }
     win.set_position(PhysicalPosition::new(x, y)).ok();
 
-    let saved_size = crate::winpos::load_size(&data_dir);
-    if let Some((w, h)) = saved_size {
-        win.set_size(PhysicalSize::new(w, h)).ok();
-    }
-
     // Seed the tracked geometry with what we actually applied, so a Destroyed event fired before
     // any Moved/Resized event (i.e. the user never dragged/resized this composer) persists this
-    // geometry rather than a stale value left behind by a previous composer session.
+    // geometry rather than a stale value left behind by a previous composer session. Resized
+    // reports inner size (and set_size sets inner size), so the fallback must use inner_size(),
+    // not the outer_size()-derived `size` used for monitor/position math above — otherwise a
+    // never-resized composer would persist its outer size and grow by the window-chrome delta
+    // every session.
     *app.state::<ComposerGeom>().pos.lock().unwrap() = Some((x, y));
-    *app.state::<ComposerGeom>().size.lock().unwrap() =
-        Some(saved_size.unwrap_or((size.width, size.height)));
+    *app.state::<ComposerGeom>().size.lock().unwrap() = Some(saved_size.unwrap_or_else(|| {
+        win.inner_size().map(|s| (s.width, s.height)).unwrap_or((420, 380))
+    }));
 
     // track moves/resizes; persist on destroy
     let app2 = app.clone();
