@@ -30,13 +30,22 @@ const canvasEl = ref<HTMLCanvasElement | null>(null);
 const img = new Image();
 let drawing = false;
 
+let refreshSeq = 0;
 async function refreshCaptures(selectLast = false) {
-  captures.value = await invoke<string[]>("get_captures");
+  const my = ++refreshSeq;
+  const list = await invoke<string[]>("get_captures");
+  if (my !== refreshSeq) return; // a newer refresh superseded this one
+  const prevPath = captures.value[current.value];
+  captures.value = list;
   bust.value++;
-  if (selectLast && captures.value.length) current.value = captures.value.length - 1;
-  if (current.value >= captures.value.length) current.value = Math.max(0, captures.value.length - 1);
-  shapes.value = [];
-  annotating.value = false;
+  const keep = prevPath ? list.indexOf(prevPath) : -1;
+  if (keep !== -1 && (annotating.value || !selectLast)) {
+    current.value = keep; // selection + shapes survive unrelated mutations
+  } else {
+    current.value = Math.max(0, list.length - 1);
+    shapes.value = [];
+    annotating.value = false;
+  }
 }
 
 async function startAnnotate() {
@@ -120,13 +129,13 @@ async function removeAt(i: number) {
 }
 
 onMounted(async () => {
+  listen("captures-changed", () => refreshCaptures(true));
   await refreshCaptures(true);
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") invoke("cancel_capture");
   });
   sessions.value = await invoke<Session[]>("list_sessions_cmd");
   if (sessions.value.length > 0) selected.value = "0"; // auto-select the only/first session
-  listen("captures-changed", () => refreshCaptures(true));
   window.addEventListener("paste", async () => {
     error.value = "";
     try {
@@ -155,6 +164,7 @@ async function send() {
     if (shapes.value.length && canvasEl.value) {
       redraw();
       await invoke("save_annotated", { dataUrl: canvasEl.value.toDataURL("image/png"), index: current.value });
+      bust.value++; // avoid a failed send leaving a stale pre-annotation preview cached
     }
     const s = selected.value === "" ? null : sessions.value[Number(selected.value)];
     await invoke("send_capture", {
