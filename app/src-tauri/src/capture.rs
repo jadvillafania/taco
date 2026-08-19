@@ -98,6 +98,20 @@ pub fn save_active_window(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Save the clipboard's image (if any) as a capture PNG.
+pub fn save_clipboard_image(app: &AppHandle) -> Result<PathBuf, String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    let img = app
+        .clipboard()
+        .read_image()
+        .map_err(|_| "No image on the clipboard")?;
+    let rgba = RgbaImage::from_raw(img.width(), img.height(), img.rgba().to_vec())
+        .ok_or("clipboard image has unexpected layout")?;
+    let path = capture_path(app);
+    rgba.save(&path).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

@@ -26,8 +26,11 @@ pub fn run() {
                     use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
                     if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                         let window_sc = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::Space);
+                        let clip_sc = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyV);
                         if shortcut == &window_sc {
                             crate::commands::start_window_capture(app);
+                        } else if shortcut == &clip_sc {
+                            crate::commands::start_clipboard_capture(app);
                         } else {
                             crate::commands::start_region_capture(app);
                         }
@@ -69,6 +72,16 @@ pub fn run() {
                     &format!("Ctrl+Alt+Space is taken by another app — use the tray menu ({e})"),
                 );
             }
+            if let Err(e) = app
+                .global_shortcut()
+                .register(Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyV))
+            {
+                crate::commands::notify(
+                    app.handle(),
+                    "Hotkey unavailable",
+                    &format!("Ctrl+Alt+V is taken by another app — use the tray menu ({e})"),
+                );
+            }
 
             let captures = crate::retention::data_dir(app.handle()).join("captures");
             std::thread::spawn(move || {
@@ -84,10 +97,11 @@ pub fn run() {
             )?;
             let screen = MenuItem::with_id(app, "capture_screen", "Capture Screen", true, None::<&str>)?;
             let window = MenuItem::with_id(app, "capture_window", "Capture Active Window\tCtrl+Alt+Space", true, None::<&str>)?;
+            let clip = MenuItem::with_id(app, "capture_clipboard", "Send Clipboard Image\tCtrl+Alt+V", true, None::<&str>)?;
             let install_shim = MenuItem::with_id(app, "install_shim", "Install WSL Shim…", true, None::<&str>)?;
             let remove_shim = MenuItem::with_id(app, "remove_shim", "Remove WSL Shim", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Exit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&region, &screen, &window, &install_shim, &remove_shim, &quit])?;
+            let menu = Menu::with_items(app, &[&region, &screen, &window, &clip, &install_shim, &remove_shim, &quit])?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Developer Visual Companion")
@@ -97,6 +111,7 @@ pub fn run() {
                     "capture_region" => crate::commands::start_region_capture(app),
                     "capture_screen" => crate::commands::start_screen_capture(app),
                     "capture_window" => crate::commands::start_window_capture(app),
+                    "capture_clipboard" => crate::commands::start_clipboard_capture(app),
                     "install_shim" => {
                         use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
                         let app = app.clone();
