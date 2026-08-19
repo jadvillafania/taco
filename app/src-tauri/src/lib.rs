@@ -106,19 +106,27 @@ pub fn run() {
                     "capture_window" => crate::commands::start_window_capture(app),
                     "capture_clipboard" => crate::commands::start_clipboard_capture(app),
                     "history" => {
-                        if app.get_webview_window("history").is_none() {
+                        if let Some(w) = app.get_webview_window("history") {
+                            w.show().ok();
+                            w.set_focus().ok();
+                        } else {
                             tauri::WebviewWindowBuilder::new(app, "history", tauri::WebviewUrl::App("index.html?window=history".into()))
                                 .title("Capture History")
                                 .inner_size(560.0, 480.0)
+                                .visible(false)
                                 .build()
                                 .ok();
                         }
                     }
                     "settings" => {
-                        if app.get_webview_window("settings").is_none() {
+                        if let Some(w) = app.get_webview_window("settings") {
+                            w.show().ok();
+                            w.set_focus().ok();
+                        } else {
                             tauri::WebviewWindowBuilder::new(app, "settings", tauri::WebviewUrl::App("index.html?window=settings".into()))
                                 .title("Settings")
                                 .inner_size(420.0, 460.0)
+                                .visible(false)
                                 .build()
                                 .ok();
                         }

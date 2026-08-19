@@ -82,6 +82,9 @@ onMounted(async () => {
   hotkeyWindow.value = s.hotkey_window;
   hotkeyClipboard.value = s.hotkey_clipboard;
   loaded.value = snapshot();
+  const w = getCurrentWindow();
+  await w.show();
+  await w.setFocus();
 });
 
 async function save() {

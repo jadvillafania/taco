@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type Entry = { path: string; name: string; modified: number };
 const entries = ref<Entry[]>([]);
@@ -9,7 +10,12 @@ const error = ref("");
 async function refresh() {
   entries.value = await invoke<Entry[]>("list_captures");
 }
-onMounted(refresh);
+onMounted(async () => {
+  await refresh();
+  const w = getCurrentWindow();
+  await w.show();
+  await w.setFocus();
+});
 
 async function resend(e: Entry) {
   error.value = "";
