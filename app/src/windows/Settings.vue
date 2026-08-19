@@ -36,6 +36,7 @@ function chordFromEvent(e: KeyboardEvent): string | null | "" {
 }
 
 function onRecordKey(e: KeyboardEvent, slot: HotkeySlot) {
+  if (recording.value !== slot) return;
   e.preventDefault();
   if (e.key === "Escape") {
     recording.value = "";
@@ -50,6 +51,11 @@ function onRecordKey(e: KeyboardEvent, slot: HotkeySlot) {
   }
   slotRef(slot).value = chord;
   recording.value = "";
+  recordHint.value = "";
+}
+
+function onRecordBlur(slot: HotkeySlot) {
+  if (recording.value === slot) recording.value = "";
   recordHint.value = "";
 }
 
@@ -105,7 +111,7 @@ async function save() {
         :value="recording === 'region' ? 'Press keys…' : hotkeyRegion"
         :class="{ recording: recording === 'region' }"
         @focus="recording = 'region'; recordHint = ''"
-        @blur="recording === 'region' && (recording = '')"
+        @blur="onRecordBlur('region')"
         @keydown="onRecordKey($event, 'region')"
       />
     </label>
@@ -116,7 +122,7 @@ async function save() {
         :value="recording === 'window' ? 'Press keys…' : hotkeyWindow"
         :class="{ recording: recording === 'window' }"
         @focus="recording = 'window'; recordHint = ''"
-        @blur="recording === 'window' && (recording = '')"
+        @blur="onRecordBlur('window')"
         @keydown="onRecordKey($event, 'window')"
       />
     </label>
@@ -127,7 +133,7 @@ async function save() {
         :value="recording === 'clipboard' ? 'Press keys…' : hotkeyClipboard"
         :class="{ recording: recording === 'clipboard' }"
         @focus="recording = 'clipboard'; recordHint = ''"
-        @blur="recording === 'clipboard' && (recording = '')"
+        @blur="onRecordBlur('clipboard')"
         @keydown="onRecordKey($event, 'clipboard')"
       />
     </label>
