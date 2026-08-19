@@ -4,14 +4,11 @@ Deferred work, in rough priority order. Each lands as its own small branch when 
 
 ## From user testing (2026-08-19)
 
-- **Hotkey reassignment in Settings** — three fields (region / active window / clipboard)
-  stored in `settings.json`, registered at startup instead of the hard-coded shortcuts,
-  re-registered live on save; invalid/conflicting bindings rejected via notification,
-  old binding kept. (Product spec §20 lists this; cut from M3 for minimalism.)
-- **Composer too small for annotation** — window is fixed 420×380 with the preview capped
-  at 160px, so editing the capture is cramped. Fix: make the composer resizable
-  (`.resizable(true)`, sensible min size), let the preview/canvas flex to fill available
-  height instead of the 160px cap, and remember size alongside the remembered position.
+- ~~Hotkey reassignment in Settings~~ — shipped on m3-p1-extras (rebindable region/window/clipboard
+  hotkeys in Settings, live re-registration, fallback to defaults on invalid/taken bindings).
+  Known limitation: tray menu accelerator labels don't update after a remap until restart.
+- ~~Composer too small for annotation~~ — shipped on m3-p1-extras (resizable composer,
+  min 420×380, preview/canvas fill the window, size remembered like position).
 
 ## Deferred minors from M3 reviews (all cosmetic/observability; none block anything)
 
