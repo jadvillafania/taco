@@ -22,23 +22,33 @@ pub fn apply(app: &tauri::AppHandle, s: &crate::settings::Settings) {
     gs.unregister_all().ok();
 
     let defaults = crate::settings::Settings::default();
-    let mut resolve = |wanted: &str, fallback: &str, label: &str| -> Shortcut {
-        let sc = match parse_shortcut(wanted) {
-            Ok(sc) => sc,
+    let resolve = |wanted: &str, fallback: &str, label: &str| -> Shortcut {
+        let (sc, wanted_valid) = match parse_shortcut(wanted) {
+            Ok(sc) => (sc, true),
             Err(e) => {
                 crate::commands::notify(app, "Hotkey invalid", &format!("{label}: {e} — using {fallback}"));
-                parse_shortcut(fallback).expect("default hotkey parses")
+                (parse_shortcut(fallback).expect("default hotkey parses"), false)
             }
         };
         if gs.register(sc).is_err() {
+            if wanted_valid {
+                crate::commands::notify(
+                    app,
+                    "Hotkey unavailable",
+                    &format!("{label}: '{wanted}' is taken by another app — using {fallback}"),
+                );
+                let fb = parse_shortcut(fallback).expect("default hotkey parses");
+                gs.register(fb).ok(); // if even the default is taken, the tray menu still works
+                return fb;
+            }
+            // wanted was invalid syntax (already notified above); sc IS the fallback and its
+            // registration just failed too — don't retry the same registration a second time.
             crate::commands::notify(
                 app,
                 "Hotkey unavailable",
-                &format!("{label}: '{wanted}' is taken by another app — using {fallback}"),
+                &format!("{label}: default '{fallback}' could not be registered"),
             );
-            let fb = parse_shortcut(fallback).expect("default hotkey parses");
-            gs.register(fb).ok(); // if even the default is taken, the tray menu still works
-            return fb;
+            return sc;
         }
         sc
     };
