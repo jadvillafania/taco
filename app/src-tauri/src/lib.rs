@@ -61,7 +61,6 @@ pub fn run() {
         .manage(commands::ComposerGeom::default())
         .setup(|app| {
             let s = crate::settings::load(&crate::retention::data_dir(app.handle()));
-            crate::hotkeys::apply(app.handle(), &s);
 
             let retention_hours = s.retention_hours;
             let captures = crate::retention::data_dir(app.handle()).join("captures");
@@ -89,6 +88,13 @@ pub fn run() {
             let autostart_handle = autostart.clone();
             let quit = MenuItem::with_id(app, "quit", "Exit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&region, &screen, &window, &clip, &history, &settings, &install_shim, &remove_shim, &autostart, &quit])?;
+
+            app.manage(crate::hotkeys::TrayLabels {
+                region: region.clone(),
+                window: window.clone(),
+                clipboard: clip.clone(),
+            });
+
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Developer Visual Companion")
@@ -163,6 +169,9 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+
+            crate::hotkeys::apply(app.handle(), &s);
+
             Ok(())
         })
         .build(tauri::generate_context!())

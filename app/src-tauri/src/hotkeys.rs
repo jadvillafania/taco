@@ -12,17 +12,23 @@ pub struct Hotkeys {
     pub clipboard: Mutex<Shortcut>,
 }
 
+/// Tray menu items whose accelerator labels must stay in sync with the hotkeys actually
+/// registered by `apply`.
+pub struct TrayLabels {
+    pub region: tauri::menu::MenuItem<tauri::Wry>,
+    pub window: tauri::menu::MenuItem<tauri::Wry>,
+    pub clipboard: tauri::menu::MenuItem<tauri::Wry>,
+}
+
 /// (Re)register the three capture hotkeys from settings. A binding that fails to parse or
 /// register falls back to that action's built-in default; failures surface via notify.
-// ponytail: tray menu accelerator labels ("...\tCtrl+Shift+Space") are built once and go
-// stale after a remap; live tray-label updates when someone complains.
 pub fn apply(app: &tauri::AppHandle, s: &crate::settings::Settings) {
     use tauri::Manager;
     let gs = app.global_shortcut();
     gs.unregister_all().ok();
 
     let defaults = crate::settings::Settings::default();
-    let resolve = |wanted: &str, fallback: &str, label: &str| -> Shortcut {
+    let resolve = |wanted: &str, fallback: &str, label: &str| -> (Shortcut, String) {
         let (sc, wanted_valid) = match parse_shortcut(wanted) {
             Ok(sc) => (sc, true),
             Err(e) => {
@@ -39,7 +45,7 @@ pub fn apply(app: &tauri::AppHandle, s: &crate::settings::Settings) {
                 );
                 let fb = parse_shortcut(fallback).expect("default hotkey parses");
                 gs.register(fb).ok(); // if even the default is taken, the tray menu still works
-                return fb;
+                return (fb, fallback.to_string());
             }
             // wanted was invalid syntax (already notified above); sc IS the fallback and its
             // registration just failed too — don't retry the same registration a second time.
@@ -48,14 +54,16 @@ pub fn apply(app: &tauri::AppHandle, s: &crate::settings::Settings) {
                 "Hotkey unavailable",
                 &format!("{label}: default '{fallback}' could not be registered"),
             );
-            return sc;
+            // sc failed to register, but the label still shows the default binding — the tray
+            // click handler falls through to nothing for this action until settings are fixed.
+            return (sc, fallback.to_string());
         }
-        sc
+        (sc, wanted.to_string())
     };
 
-    let region = resolve(&s.hotkey_region, &defaults.hotkey_region, "Capture Region");
-    let window = resolve(&s.hotkey_window, &defaults.hotkey_window, "Capture Active Window");
-    let clipboard = resolve(&s.hotkey_clipboard, &defaults.hotkey_clipboard, "Send Clipboard Image");
+    let (region, region_label) = resolve(&s.hotkey_region, &defaults.hotkey_region, "Capture Region");
+    let (window, window_label) = resolve(&s.hotkey_window, &defaults.hotkey_window, "Capture Active Window");
+    let (clipboard, clipboard_label) = resolve(&s.hotkey_clipboard, &defaults.hotkey_clipboard, "Send Clipboard Image");
 
     match app.try_state::<Hotkeys>() {
         Some(hk) => {
@@ -70,6 +78,12 @@ pub fn apply(app: &tauri::AppHandle, s: &crate::settings::Settings) {
                 clipboard: Mutex::new(clipboard),
             });
         }
+    }
+
+    if let Some(labels) = app.try_state::<TrayLabels>() {
+        labels.region.set_text(format!("Capture Region\t{region_label}")).ok();
+        labels.window.set_text(format!("Capture Active Window\t{window_label}")).ok();
+        labels.clipboard.set_text(format!("Send Clipboard Image\t{clipboard_label}")).ok();
     }
 }
 
