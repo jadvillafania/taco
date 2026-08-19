@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -10,6 +10,7 @@ const hotkeyWindow = ref("");
 const hotkeyClipboard = ref("");
 const saved = ref(false);
 const error = ref("");
+const loaded = ref("");
 
 type HotkeySlot = "region" | "window" | "clipboard";
 const recording = ref<HotkeySlot | "">("");
@@ -59,6 +60,14 @@ function onRecordBlur(slot: HotkeySlot) {
   recordHint.value = "";
 }
 
+function snapshot() {
+  return JSON.stringify([
+    retentionHours.value, defaultInstruction.value,
+    hotkeyRegion.value, hotkeyWindow.value, hotkeyClipboard.value,
+  ]);
+}
+const dirty = computed(() => loaded.value !== "" && snapshot() !== loaded.value);
+
 onMounted(async () => {
   const s = await invoke<{
     retention_hours: number;
@@ -72,6 +81,7 @@ onMounted(async () => {
   hotkeyRegion.value = s.hotkey_region;
   hotkeyWindow.value = s.hotkey_window;
   hotkeyClipboard.value = s.hotkey_clipboard;
+  loaded.value = snapshot();
 });
 
 async function save() {
@@ -143,8 +153,7 @@ async function save() {
     <p v-if="recordHint" class="hint">{{ recordHint }}</p>
     <p v-if="error" class="error-text">{{ error }}</p>
     <div class="buttons">
-      <button class="btn btn-quiet" @click="getCurrentWindow().close()">Cancel</button>
-      <button class="btn btn-primary" @click="save">{{ saved ? "Saved" : "Save" }}</button>
+      <button class="btn btn-primary" :disabled="!dirty" @click="save">{{ saved ? "Saved" : "Save" }}</button>
     </div>
   </div>
 </template>
