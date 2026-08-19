@@ -132,15 +132,16 @@ async function send() {
 <template>
   <div class="composer">
     <img v-if="!annotating" :src="previewSrc" class="preview" @click="startAnnotate" title="Click to annotate" />
-    <canvas
-      v-else
-      ref="canvasEl"
-      class="preview canvas"
-      @mousedown="down"
-      @mousemove="move"
-      @mouseup="up"
-      @mouseleave="up"
-    />
+    <div v-else class="canvas-wrap">
+      <canvas
+        ref="canvasEl"
+        class="canvas"
+        @mousedown="down"
+        @mousemove="move"
+        @mouseup="up"
+        @mouseleave="up"
+      />
+    </div>
     <div v-if="annotating" class="tools">
       <button :class="{ on: tool === 'pen' }" @click="tool = 'pen'">Pen</button>
       <button :class="{ on: tool === 'arrow' }" @click="tool = 'arrow'">Arrow</button>
@@ -167,8 +168,9 @@ async function send() {
 
 <style scoped>
 .composer { display: flex; flex-direction: column; gap: 8px; padding: 10px; height: 100vh; box-sizing: border-box; font-family: system-ui; }
-.preview { max-height: 160px; object-fit: contain; border: 1px solid #ccc; }
-.canvas { cursor: crosshair; max-height: 160px; width: auto; align-self: center; }
+.preview { flex: 1; min-height: 160px; width: 100%; object-fit: contain; border: 1px solid #ccc; cursor: pointer; }
+.canvas-wrap { flex: 1; min-height: 160px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.canvas { max-width: 100%; max-height: 100%; cursor: crosshair; }
 .tools { display: flex; gap: 6px; }
 .tools .on { outline: 2px solid #e11; }
 .actions { display: flex; gap: 6px; flex-wrap: wrap; }

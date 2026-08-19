@@ -1,14 +1,28 @@
 use std::path::Path;
 
+pub const MIN_W: u32 = 420;
+pub const MIN_H: u32 = 380;
+
 pub fn load(dir: &Path) -> Option<(i32, i32)> {
     let txt = std::fs::read_to_string(dir.join("composer-pos.json")).ok()?;
     let v: serde_json::Value = serde_json::from_str(&txt).ok()?;
     Some((v["x"].as_i64()? as i32, v["y"].as_i64()? as i32))
 }
 
-pub fn save(dir: &Path, x: i32, y: i32) {
+pub fn load_size(dir: &Path) -> Option<(u32, u32)> {
+    let txt = std::fs::read_to_string(dir.join("composer-pos.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&txt).ok()?;
+    let w = (v["w"].as_u64()? as u32).max(MIN_W);
+    let h = (v["h"].as_u64()? as u32).max(MIN_H);
+    Some((w, h))
+}
+
+pub fn save(dir: &Path, x: i32, y: i32, w: u32, h: u32) {
     let _ = std::fs::create_dir_all(dir);
-    let _ = std::fs::write(dir.join("composer-pos.json"), format!(r#"{{"x":{x},"y":{y}}}"#));
+    let _ = std::fs::write(
+        dir.join("composer-pos.json"),
+        format!(r#"{{"x":{x},"y":{y},"w":{w},"h":{h}}}"#),
+    );
 }
 
 /// monitors: (x, y, width, height) per monitor, physical px
@@ -43,16 +57,34 @@ mod tests {
     #[test]
     fn save_load_roundtrip() {
         let dir = tempdir("roundtrip");
-        save(&dir, 123, 456);
+        save(&dir, 123, 456, 800, 600);
         assert_eq!(load(&dir), Some((123, 456)));
+        assert_eq!(load_size(&dir), Some((800, 600)));
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn save_load_roundtrip_negative_coords() {
         let dir = tempdir("roundtrip-negative");
-        save(&dir, -10, -20);
+        save(&dir, -10, -20, 420, 380);
         assert_eq!(load(&dir), Some((-10, -20)));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn legacy_pos_only_file_still_loads() {
+        let dir = tempdir("legacy");
+        std::fs::write(dir.join("composer-pos.json"), r#"{"x":10,"y":20}"#).unwrap();
+        assert_eq!(load(&dir), Some((10, 20)));
+        assert_eq!(load_size(&dir), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn undersized_saved_size_is_clamped_to_minimum() {
+        let dir = tempdir("clamp");
+        save(&dir, 0, 0, 100, 100);
+        assert_eq!(load_size(&dir), Some((420, 380)));
         std::fs::remove_dir_all(&dir).ok();
     }
 

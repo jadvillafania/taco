@@ -82,7 +82,11 @@ pub async fn region_selected(app: AppHandle, state: State<'_, CaptureState>, x: 
     Ok(())
 }
 
-pub struct LastComposerPos(pub std::sync::Mutex<Option<(i32, i32)>>);
+#[derive(Default)]
+pub struct ComposerGeom {
+    pub pos: std::sync::Mutex<Option<(i32, i32)>>,
+    pub size: std::sync::Mutex<Option<(u32, u32)>>,
+}
 
 pub fn open_composer(app: &AppHandle) {
     // Defensively close any existing composer before opening a new one (label must be unique).
@@ -92,8 +96,9 @@ pub fn open_composer(app: &AppHandle) {
     let win = match WebviewWindowBuilder::new(app, "composer", WebviewUrl::App("index.html?window=composer".into()))
         .title("Send to Claude Code")
         .inner_size(420.0, 380.0)
+        .min_inner_size(420.0, 380.0)
         .always_on_top(true)
-        .resizable(false)
+        .resizable(true)
         .visible(false)
         .build()
     {
@@ -141,21 +146,34 @@ pub fn open_composer(app: &AppHandle) {
         }
     }
     win.set_position(PhysicalPosition::new(x, y)).ok();
-    // Seed the tracked position with what we actually applied, so a Destroyed event fired before
-    // any Moved event (i.e. the user never dragged this composer) persists this position rather
-    // than a stale value left behind by a previous composer session.
-    *app.state::<LastComposerPos>().0.lock().unwrap() = Some((x, y));
 
-    // track moves; persist on destroy
+    let saved_size = crate::winpos::load_size(&data_dir);
+    if let Some((w, h)) = saved_size {
+        win.set_size(PhysicalSize::new(w, h)).ok();
+    }
+
+    // Seed the tracked geometry with what we actually applied, so a Destroyed event fired before
+    // any Moved/Resized event (i.e. the user never dragged/resized this composer) persists this
+    // geometry rather than a stale value left behind by a previous composer session.
+    *app.state::<ComposerGeom>().pos.lock().unwrap() = Some((x, y));
+    *app.state::<ComposerGeom>().size.lock().unwrap() =
+        Some(saved_size.unwrap_or((size.width, size.height)));
+
+    // track moves/resizes; persist on destroy
     let app2 = app.clone();
     win.on_window_event(move |event| match event {
         tauri::WindowEvent::Moved(p) => {
-            *app2.state::<LastComposerPos>().0.lock().unwrap() = Some((p.x, p.y));
+            *app2.state::<ComposerGeom>().pos.lock().unwrap() = Some((p.x, p.y));
+        }
+        tauri::WindowEvent::Resized(s) => {
+            *app2.state::<ComposerGeom>().size.lock().unwrap() = Some((s.width, s.height));
         }
         tauri::WindowEvent::Destroyed => {
-            let pos = *app2.state::<LastComposerPos>().0.lock().unwrap();
-            if let Some((x, y)) = pos {
-                crate::winpos::save(&crate::retention::data_dir(&app2), x, y);
+            let geom = app2.state::<ComposerGeom>();
+            let pos = *geom.pos.lock().unwrap();
+            let size = *geom.size.lock().unwrap();
+            if let (Some((x, y)), Some((w, h))) = (pos, size) {
+                crate::winpos::save(&crate::retention::data_dir(&app2), x, y, w, h);
             }
         }
         _ => {}

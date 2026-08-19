@@ -58,7 +58,7 @@ pub fn run() {
             settings::set_settings
         ])
         .manage(capture::CaptureState(Default::default()))
-        .manage(commands::LastComposerPos(Default::default()))
+        .manage(commands::ComposerGeom::default())
         .setup(|app| {
             use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
             if let Err(e) = app
