@@ -11,6 +11,48 @@ const hotkeyClipboard = ref("");
 const saved = ref(false);
 const error = ref("");
 
+type HotkeySlot = "region" | "window" | "clipboard";
+const recording = ref<HotkeySlot | "">("");
+const recordHint = ref("");
+
+const slotRef = (slot: HotkeySlot) =>
+  slot === "region" ? hotkeyRegion : slot === "window" ? hotkeyWindow : hotkeyClipboard;
+
+function chordFromEvent(e: KeyboardEvent): string | null | "" {
+  if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return null; // wait for a real key
+  let key = "";
+  if (e.code.startsWith("Key")) key = e.code.slice(3);
+  else if (e.code.startsWith("Digit")) key = e.code.slice(5);
+  else if (e.code === "Space") key = "Space";
+  else if (/^F([1-9]|1[0-2])$/.test(e.key)) key = e.key;
+  else return null; // unsupported key: keep recording
+  const mods: string[] = [];
+  if (e.ctrlKey) mods.push("Ctrl");
+  if (e.altKey) mods.push("Alt");
+  if (e.shiftKey) mods.push("Shift");
+  if (e.metaKey) mods.push("Super");
+  if (!mods.length) return ""; // no modifier: rejected
+  return [...mods, key].join("+");
+}
+
+function onRecordKey(e: KeyboardEvent, slot: HotkeySlot) {
+  e.preventDefault();
+  if (e.key === "Escape") {
+    recording.value = "";
+    recordHint.value = "";
+    return;
+  }
+  const chord = chordFromEvent(e);
+  if (chord === null) return;
+  if (chord === "") {
+    recordHint.value = "Add a modifier (Ctrl, Alt, Shift)";
+    return;
+  }
+  slotRef(slot).value = chord;
+  recording.value = "";
+  recordHint.value = "";
+}
+
 onMounted(async () => {
   const s = await invoke<{
     retention_hours: number;
@@ -58,16 +100,38 @@ async function save() {
     </label>
     <label>
       Region capture hotkey
-      <input v-model="hotkeyRegion" />
+      <input
+        readonly
+        :value="recording === 'region' ? 'Press keys…' : hotkeyRegion"
+        :class="{ recording: recording === 'region' }"
+        @focus="recording = 'region'; recordHint = ''"
+        @blur="recording === 'region' && (recording = '')"
+        @keydown="onRecordKey($event, 'region')"
+      />
     </label>
     <label>
       Active window hotkey
-      <input v-model="hotkeyWindow" />
+      <input
+        readonly
+        :value="recording === 'window' ? 'Press keys…' : hotkeyWindow"
+        :class="{ recording: recording === 'window' }"
+        @focus="recording = 'window'; recordHint = ''"
+        @blur="recording === 'window' && (recording = '')"
+        @keydown="onRecordKey($event, 'window')"
+      />
     </label>
     <label>
       Clipboard image hotkey
-      <input v-model="hotkeyClipboard" />
+      <input
+        readonly
+        :value="recording === 'clipboard' ? 'Press keys…' : hotkeyClipboard"
+        :class="{ recording: recording === 'clipboard' }"
+        @focus="recording = 'clipboard'; recordHint = ''"
+        @blur="recording === 'clipboard' && (recording = '')"
+        @keydown="onRecordKey($event, 'clipboard')"
+      />
     </label>
+    <p v-if="recordHint" class="hint">{{ recordHint }}</p>
     <p v-if="error" class="error">{{ error }}</p>
     <div class="buttons">
       <button @click="getCurrentWindow().close()">Cancel</button>
@@ -81,6 +145,9 @@ async function save() {
 label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 textarea { resize: none; }
 .error { font-size: 12px; color: #c00; margin: 0; }
+input[readonly] { cursor: pointer; background: #fafafa; }
+.recording { outline: 2px solid #e11; background: #fff; }
+.hint { font-size: 12px; color: #a60; margin: 0; }
 .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
 .primary { font-weight: 600; }
 </style>
