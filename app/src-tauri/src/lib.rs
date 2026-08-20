@@ -62,6 +62,7 @@ pub fn run() {
             history::clear_captures,
             settings::get_settings,
             settings::set_settings,
+            settings::get_default_settings,
             hotkeys::probe_hotkey
         ])
         .manage(capture::CaptureState(Default::default()))

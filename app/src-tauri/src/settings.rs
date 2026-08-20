@@ -42,6 +42,11 @@ pub fn get_settings(app: tauri::AppHandle) -> Settings {
 }
 
 #[tauri::command]
+pub fn get_default_settings() -> Settings {
+    Settings::default()
+}
+
+#[tauri::command]
 pub fn set_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String> {
     save(&crate::retention::data_dir(&app), &settings).map_err(|e| e.to_string())?;
     crate::hotkeys::apply(&app, &settings);
