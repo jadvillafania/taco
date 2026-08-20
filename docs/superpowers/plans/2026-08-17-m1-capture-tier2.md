@@ -22,7 +22,7 @@ powershell.exe -Command "$PSP cargo --version"
 
 (Every `powershell.exe -Command "$PSP ..."` snippet in this plan assumes that same-call definition.)
 
-- App dir: `app/` (frontend), `app/src-tauri/` (Rust). Automated checks: `cargo test` / `cargo check` in `app/src-tauri`, `pnpm build` in `app/`. `pnpm tauri dev` is for manual smoke only (long-running; launch in background, stop with `powershell.exe -Command "Stop-Process -Name DeveloperVisualCompanion -Force"`).
+- App dir: `app/` (frontend), `app/src-tauri/` (Rust). Automated checks: `cargo test` / `cargo check` in `app/src-tauri`, `pnpm build` in `app/`. `pnpm tauri dev` is for manual smoke only (long-running; launch in background, stop with `powershell.exe -Command "Stop-Process -Name Taco -Force"`; note the release binary is now `Taco`, but dev builds still run as `app.exe` from the cargo package name).
 - Captures: `%LOCALAPPDATA%\DeveloperVisualCompanion\captures\YYYY-MM-DD\capture-HHMMSS-mmm.png`. Frozen frames: `...\DeveloperVisualCompanion\frames\frame.png`.
 - Default instruction when message empty (spec §15.5, verbatim): `Analyze this screenshot in the context of the current task.`
 - Notification copy (spec §15.2, verbatim): `Ready — paste into your Claude Code terminal`
