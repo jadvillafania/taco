@@ -1,23 +1,80 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl, WebviewWindowBuilder};
 
 use crate::capture::{self, CaptureState};
 
-/// A new capture (region or full-screen) supersedes anything already in flight: close any open
-/// overlay/composer window and drop whatever pending state it was holding, so we never leave an
-/// orphaned frozen frame or pending capture file behind, and a stale overlay never outlives the
-/// capture it belonged to.
-pub fn supersede_pending_capture(app: &AppHandle) {
+/// Serializes captures across threads: a second trigger while one is in flight is ignored,
+/// matching the old "capture already in progress" behavior the main-thread sleep gave for free.
+static CAPTURE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+struct CaptureFlight;
+impl CaptureFlight {
+    fn acquire() -> Option<Self> {
+        if CAPTURE_IN_FLIGHT.swap(true, Ordering::SeqCst) { None } else { Some(CaptureFlight) }
+    }
+}
+impl Drop for CaptureFlight {
+    fn drop(&mut self) { CAPTURE_IN_FLIGHT.store(false, Ordering::SeqCst); }
+}
+
+/// A new capture (region or full-screen) supersedes any overlay already in flight: close it and
+/// drop whatever frozen frame it was holding, so a stale overlay never outlives the capture it
+/// belonged to. The composer and its accumulated captures are untouched — every capture source
+/// appends to the same list (see `push_capture`).
+pub fn supersede_pending_overlay(app: &AppHandle) {
     if let Some(o) = app.get_webview_window("overlay") {
         o.close().ok();
         if let Some(f) = app.state::<CaptureState>().0.lock().unwrap().frozen.take() {
             std::fs::remove_file(f.frame_png).ok();
         }
     }
-    if let Some(c) = app.get_webview_window("composer") {
-        c.close().ok();
-        if let Some(path) = app.state::<CaptureState>().0.lock().unwrap().capture.take() {
-            std::fs::remove_file(path).ok();
+}
+
+/// Append a capture to the pending list and notify the frontend.
+pub(crate) fn push_capture(app: &AppHandle, path: std::path::PathBuf) {
+    app.state::<CaptureState>().0.lock().unwrap().captures.push(path);
+    use tauri::Emitter;
+    app.emit("captures-changed", ()).ok();
+}
+
+/// Show the composer window, opening it if it isn't already open.
+pub fn ensure_composer(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("composer") {
+        w.show().ok();
+        w.set_focus().ok();
+    } else {
+        open_composer(app);
+    }
+}
+
+/// Hide the composer while a capture is in flight so it doesn't photobomb the shot.
+/// Returns true when a composer was actually hidden (caller waits for the OS to repaint).
+fn hide_composer(app: &AppHandle) -> bool {
+    if let Some(w) = app.get_webview_window("composer") {
+        if w.is_visible().unwrap_or(false) {
+            w.hide().ok();
+            return true;
         }
+    }
+    false
+}
+
+fn reshow_composer(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("composer") {
+        w.show().ok();
+        w.set_focus().ok();
+    }
+}
+
+/// Update the session-ranking hint only when the composer itself isn't the
+/// foreground window (clicking a composer button must not rank by our own title).
+fn sample_focus_title(app: &AppHandle) {
+    let composer_focused = app
+        .get_webview_window("composer")
+        .and_then(|w| w.is_focused().ok())
+        .unwrap_or(false);
+    if !composer_focused {
+        app.state::<CaptureState>().0.lock().unwrap().focus_title = crate::sessions::foreground_title();
     }
 }
 
@@ -25,35 +82,52 @@ pub fn start_region_capture(app: &AppHandle) {
     if app.get_webview_window("overlay").is_some() {
         return; // capture already in progress
     }
-    let focus = crate::sessions::foreground_title(); // before our windows take focus
-    supersede_pending_capture(app);
-    app.state::<CaptureState>().0.lock().unwrap().focus_title = focus;
-    let frozen = match capture::freeze_monitor_under_cursor(app) {
-        Ok(f) => f,
-        Err(e) => return notify(app, "Capture failed", &e),
-    };
-    let (mx, my, mw, mh) = (frozen.mon_x, frozen.mon_y, frozen.mon_w, frozen.mon_h);
-    app.state::<CaptureState>().0.lock().unwrap().frozen = Some(frozen);
-    let win = match WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("index.html?window=overlay".into()))
-        .decorations(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .resizable(false)
-        .visible(false)
-        .build()
-    {
-        Ok(w) => w,
-        Err(_) => {
-            if let Some(f) = app.state::<CaptureState>().0.lock().unwrap().frozen.take() {
-                std::fs::remove_file(f.frame_png).ok();
+    let Some(flight) = CaptureFlight::acquire() else { return; };
+    sample_focus_title(app);
+    let hid = hide_composer(app);
+    let app = app.clone();
+    let work = move || {
+        let _flight = flight;
+        supersede_pending_overlay(&app);
+        let frozen = match capture::freeze_monitor_under_cursor(&app) {
+            Ok(f) => f,
+            Err(e) => {
+                reshow_composer(&app);
+                return notify(&app, "Capture failed", &e);
             }
-            return notify(app, "Capture failed", "could not open overlay window");
-        }
+        };
+        let (mx, my, mw, mh) = (frozen.mon_x, frozen.mon_y, frozen.mon_w, frozen.mon_h);
+        app.state::<CaptureState>().0.lock().unwrap().frozen = Some(frozen);
+        let win = match WebviewWindowBuilder::new(&app, "overlay", WebviewUrl::App("index.html?window=overlay".into()))
+            .decorations(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .resizable(false)
+            .visible(false)
+            .build()
+        {
+            Ok(w) => w,
+            Err(_) => {
+                if let Some(f) = app.state::<CaptureState>().0.lock().unwrap().frozen.take() {
+                    std::fs::remove_file(f.frame_png).ok();
+                }
+                reshow_composer(&app);
+                return notify(&app, "Capture failed", "could not open overlay window");
+            }
+        };
+        win.set_position(PhysicalPosition::new(mx, my)).ok();
+        win.set_size(PhysicalSize::new(mw, mh)).ok();
+        win.show().ok();
+        win.set_focus().ok();
     };
-    win.set_position(PhysicalPosition::new(mx, my)).ok();
-    win.set_size(PhysicalSize::new(mw, mh)).ok();
-    win.show().ok();
-    win.set_focus().ok();
+    if hid {
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150)); // let the OS repaint before we grab pixels
+            work();
+        });
+    } else {
+        work();
+    }
 }
 
 pub fn notify(app: &AppHandle, title: &str, body: &str) {
@@ -70,15 +144,27 @@ pub fn get_frame(state: State<CaptureState>) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn region_selected(app: AppHandle, state: State<'_, CaptureState>, x: u32, y: u32, w: u32, h: u32) -> Result<(), String> {
-    {
+    let path = {
         let mut inner = state.0.lock().unwrap();
         let frozen = inner.frozen.take().ok_or("no frozen frame")?;
-        let path = capture::save_crop(&app, &frozen.image, x, y, w, h)?;
-        std::fs::remove_file(&frozen.frame_png).ok();
-        inner.capture = Some(path);
-    }
+        match capture::save_crop(&app, &frozen.image, x, y, w, h) {
+            Ok(p) => {
+                std::fs::remove_file(&frozen.frame_png).ok();
+                p
+            }
+            Err(e) => {
+                std::fs::remove_file(&frozen.frame_png).ok();
+                drop(inner);
+                if let Some(o) = app.get_webview_window("overlay") { o.close().ok(); }
+                reshow_composer(&app);
+                notify(&app, "Capture failed", &e);
+                return Err(e);
+            }
+        }
+    };
     if let Some(o) = app.get_webview_window("overlay") { o.close().ok(); }
-    open_composer(&app);
+    push_capture(&app, path);
+    ensure_composer(&app);
     Ok(())
 }
 
@@ -193,7 +279,7 @@ pub async fn cancel_capture(app: AppHandle, state: State<'_, CaptureState>) -> R
     {
         let mut inner = state.0.lock().unwrap();
         if let Some(f) = inner.frozen.take() { std::fs::remove_file(f.frame_png).ok(); }
-        if let Some(c) = inner.capture.take() { std::fs::remove_file(c).ok(); }
+        inner.captures.clear(); // files stay: History/retention owns deletion
     }
     for label in ["overlay", "composer"] {
         if let Some(w) = app.get_webview_window(label) { w.close().ok(); }
@@ -202,10 +288,54 @@ pub async fn cancel_capture(app: AppHandle, state: State<'_, CaptureState>) -> R
 }
 
 #[tauri::command]
-pub fn get_capture(state: State<CaptureState>) -> Result<String, String> {
-    state.0.lock().unwrap().capture.as_ref()
-        .map(|p| p.to_string_lossy().into_owned())
-        .ok_or_else(|| "no capture".into())
+pub async fn trigger_capture(app: AppHandle, kind: String) -> Result<(), String> {
+    match kind.as_str() {
+        "region" => { start_region_capture(&app); Ok(()) }
+        "screen" => { start_screen_capture(&app); Ok(()) }
+        _ => Err("unknown capture kind".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn cancel_overlay(app: AppHandle, state: State<'_, CaptureState>) -> Result<(), ()> {
+    if let Some(f) = state.0.lock().unwrap().frozen.take() {
+        std::fs::remove_file(f.frame_png).ok();
+    }
+    if let Some(w) = app.get_webview_window("overlay") { w.close().ok(); }
+    reshow_composer(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_captures(state: State<CaptureState>) -> Vec<String> {
+    state.0.lock().unwrap().captures.iter().map(|p| p.to_string_lossy().into_owned()).collect()
+}
+
+#[tauri::command]
+pub fn remove_capture(app: AppHandle, state: State<CaptureState>, index: usize) -> Result<(), String> {
+    let mut inner = state.0.lock().unwrap();
+    if index >= inner.captures.len() { return Err("no such image".into()); }
+    inner.captures.remove(index); // file stays: History owns deletion
+    drop(inner);
+    use tauri::Emitter;
+    app.emit("captures-changed", ()).ok();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn import_clipboard(app: AppHandle) -> Result<String, String> {
+    let path = crate::capture::save_clipboard_image(&app)?;
+    let s = path.to_string_lossy().into_owned();
+    push_capture(&app, path);
+    Ok(s)
+}
+
+#[tauri::command]
+pub fn import_file(app: AppHandle, path: String) -> Result<String, String> {
+    let dest = crate::capture::import_as_capture(&app, std::path::Path::new(&path))?;
+    let s = dest.to_string_lossy().into_owned();
+    push_capture(&app, dest);
+    Ok(s)
 }
 
 #[derive(serde::Deserialize)]
@@ -219,16 +349,19 @@ pub async fn send_capture(
     session: Option<TargetSession>,
 ) -> Result<(), String> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
-    let path = state.0.lock().unwrap().capture.clone().ok_or("no capture")?;
-    let wsl = crate::wslpath::to_wsl_path(&path.to_string_lossy())
-        .ok_or("capture path is not on a Windows drive")?;
+    let paths = state.0.lock().unwrap().captures.clone();
+    if paths.is_empty() { return Err("no capture".into()); }
+    let wsl_paths = paths
+        .iter()
+        .map(|p| crate::wslpath::to_wsl_path(&p.to_string_lossy()).ok_or("capture path is not on a Windows drive"))
+        .collect::<Result<Vec<_>, _>>()?;
     let default_instruction = crate::settings::load(&crate::retention::data_dir(&app)).default_instruction;
-    let payload = crate::payload::build_payload(message.as_deref(), &wsl, &default_instruction);
+    let payload = crate::payload::build_payload(message.as_deref(), &wsl_paths, &default_instruction);
 
     if let Some(s) = &session {
         match crate::tier1::send_via_shim(&s.distro, &s.sid, &payload) {
             crate::tier1::Outcome::Ack => {
-                state.0.lock().unwrap().capture = None;
+                state.0.lock().unwrap().captures.clear();
                 if let Some(w) = app.get_webview_window("composer") { w.close().ok(); }
                 notify(&app, "Screenshot sent to Claude Code", &s.project); // spec §21 copy
                 return Ok(());
@@ -241,7 +374,7 @@ pub async fn send_capture(
     }
 
     app.clipboard().write_text(payload).map_err(|e| e.to_string())?;
-    state.0.lock().unwrap().capture = None; // sent: keep the file, forget the pending state
+    state.0.lock().unwrap().captures.clear(); // sent: keep the files, forget the pending state
     if let Some(w) = app.get_webview_window("composer") { w.close().ok(); }
     let body = if session.is_some() {
         "Session busy or unreachable — payload copied. Paste into your Claude Code terminal"
@@ -253,39 +386,70 @@ pub async fn send_capture(
 }
 
 pub fn start_screen_capture(app: &AppHandle) {
-    let focus = crate::sessions::foreground_title();
-    supersede_pending_capture(app);
-    app.state::<CaptureState>().0.lock().unwrap().focus_title = focus;
-    match capture::save_full(app) {
-        Ok(path) => {
-            app.state::<CaptureState>().0.lock().unwrap().capture = Some(path);
-            open_composer(app);
+    let Some(flight) = CaptureFlight::acquire() else { return; };
+    sample_focus_title(app);
+    let hid = hide_composer(app);
+    let app = app.clone();
+    let work = move || {
+        let _flight = flight;
+        supersede_pending_overlay(&app);
+        match capture::save_full(&app) {
+            Ok(path) => {
+                push_capture(&app, path);
+                ensure_composer(&app);
+            }
+            Err(e) => {
+                reshow_composer(&app);
+                notify(&app, "Capture failed", &e);
+            }
         }
-        Err(e) => notify(app, "Capture failed", &e),
+    };
+    if hid {
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150)); // let the OS repaint before we grab pixels
+            work();
+        });
+    } else {
+        work();
     }
 }
 
 pub fn start_window_capture(app: &AppHandle) {
-    let focus = crate::sessions::foreground_title();
-    supersede_pending_capture(app);
-    app.state::<CaptureState>().0.lock().unwrap().focus_title = focus;
-    match capture::save_active_window(app) {
-        Ok(path) => {
-            app.state::<CaptureState>().0.lock().unwrap().capture = Some(path);
-            open_composer(app);
+    let Some(flight) = CaptureFlight::acquire() else { return; };
+    sample_focus_title(app);
+    let hid = hide_composer(app);
+    let app = app.clone();
+    let work = move || {
+        let _flight = flight;
+        supersede_pending_overlay(&app);
+        match capture::save_active_window(&app) {
+            Ok(path) => {
+                push_capture(&app, path);
+                ensure_composer(&app);
+            }
+            Err(e) => {
+                reshow_composer(&app);
+                notify(&app, "Capture failed", &e);
+            }
         }
-        Err(e) => notify(app, "Capture failed", &e),
+    };
+    if hid {
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150)); // let the OS repaint before we grab pixels
+            work();
+        });
+    } else {
+        work();
     }
 }
 
 pub fn start_clipboard_capture(app: &AppHandle) {
-    let focus = crate::sessions::foreground_title();
-    supersede_pending_capture(app);
-    app.state::<CaptureState>().0.lock().unwrap().focus_title = focus;
+    sample_focus_title(app);
+    supersede_pending_overlay(app);
     match capture::save_clipboard_image(app) {
         Ok(path) => {
-            app.state::<CaptureState>().0.lock().unwrap().capture = Some(path);
-            open_composer(app);
+            push_capture(app, path);
+            ensure_composer(app);
         }
         Err(e) => notify(app, "Clipboard capture failed", &e),
     }
@@ -302,16 +466,16 @@ pub fn decode_png_data_url(data_url: &str) -> Result<Vec<u8>, String> {
 }
 
 #[tauri::command]
-pub fn save_annotated(state: State<CaptureState>, data_url: String) -> Result<(), String> {
-    let path = state.0.lock().unwrap().capture.clone().ok_or("no capture")?;
+pub fn save_annotated(state: State<CaptureState>, data_url: String, index: usize) -> Result<(), String> {
+    let path = state.0.lock().unwrap().captures.get(index).cloned().ok_or("no capture")?;
     let bytes = decode_png_data_url(&data_url)?;
     std::fs::write(&path, bytes).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn get_capture_data_url(state: State<CaptureState>) -> Result<String, String> {
+pub fn get_capture_data_url(state: State<CaptureState>, index: usize) -> Result<String, String> {
     use base64::Engine;
-    let path = state.0.lock().unwrap().capture.clone().ok_or("no capture")?;
+    let path = state.0.lock().unwrap().captures.get(index).cloned().ok_or("no capture")?;
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
     Ok(format!(
         "data:image/png;base64,{}",

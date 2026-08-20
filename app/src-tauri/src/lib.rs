@@ -45,7 +45,12 @@ pub fn run() {
             commands::get_frame,
             commands::region_selected,
             commands::cancel_capture,
-            commands::get_capture,
+            commands::cancel_overlay,
+            commands::trigger_capture,
+            commands::get_captures,
+            commands::remove_capture,
+            commands::import_clipboard,
+            commands::import_file,
             commands::send_capture,
             commands::save_annotated,
             commands::get_capture_data_url,
@@ -78,6 +83,7 @@ pub fn run() {
             let screen = MenuItem::with_id(app, "capture_screen", "Capture Screen", true, None::<&str>)?;
             let window = MenuItem::with_id(app, "capture_window", "Capture Active Window\tCtrl+Alt+Space", true, None::<&str>)?;
             let clip = MenuItem::with_id(app, "capture_clipboard", "Send Clipboard Image\tCtrl+Alt+V", true, None::<&str>)?;
+            let open_comp = MenuItem::with_id(app, "open_composer", "Open Composer…", true, None::<&str>)?;
             let history = MenuItem::with_id(app, "history", "Capture History…", true, None::<&str>)?;
             let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
             let install_shim = MenuItem::with_id(app, "install_shim", "Install WSL Shim…", true, None::<&str>)?;
@@ -87,7 +93,7 @@ pub fn run() {
             let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, auto_on, None::<&str>)?;
             let autostart_handle = autostart.clone();
             let quit = MenuItem::with_id(app, "quit", "Exit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&region, &screen, &window, &clip, &history, &settings, &install_shim, &remove_shim, &autostart, &quit])?;
+            let menu = Menu::with_items(app, &[&open_comp, &region, &screen, &window, &clip, &history, &settings, &install_shim, &remove_shim, &autostart, &quit])?;
 
             app.manage(crate::hotkeys::TrayLabels {
                 region: region.clone(),
@@ -105,20 +111,33 @@ pub fn run() {
                     "capture_screen" => crate::commands::start_screen_capture(app),
                     "capture_window" => crate::commands::start_window_capture(app),
                     "capture_clipboard" => crate::commands::start_clipboard_capture(app),
+                    "open_composer" => {
+                        let focus = crate::sessions::foreground_title();
+                        app.state::<crate::capture::CaptureState>().0.lock().unwrap().focus_title = focus;
+                        crate::commands::ensure_composer(app);
+                    }
                     "history" => {
-                        if app.get_webview_window("history").is_none() {
+                        if let Some(w) = app.get_webview_window("history") {
+                            w.show().ok();
+                            w.set_focus().ok();
+                        } else {
                             tauri::WebviewWindowBuilder::new(app, "history", tauri::WebviewUrl::App("index.html?window=history".into()))
                                 .title("Capture History")
                                 .inner_size(560.0, 480.0)
+                                .visible(false)
                                 .build()
                                 .ok();
                         }
                     }
                     "settings" => {
-                        if app.get_webview_window("settings").is_none() {
+                        if let Some(w) = app.get_webview_window("settings") {
+                            w.show().ok();
+                            w.set_focus().ok();
+                        } else {
                             tauri::WebviewWindowBuilder::new(app, "settings", tauri::WebviewUrl::App("index.html?window=settings".into()))
                                 .title("Settings")
                                 .inner_size(420.0, 460.0)
+                                .visible(false)
                                 .build()
                                 .ok();
                         }

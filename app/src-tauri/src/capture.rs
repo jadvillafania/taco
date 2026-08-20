@@ -15,7 +15,7 @@ pub struct Frozen {
 #[derive(Default)]
 pub struct Inner {
     pub frozen: Option<Frozen>,
-    pub capture: Option<PathBuf>,
+    pub captures: Vec<PathBuf>,
     pub focus_title: Option<String>,
 }
 pub struct CaptureState(pub Mutex<Inner>);
@@ -98,6 +98,20 @@ pub fn save_active_window(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Decode any supported image file and write it as a PNG at dest.
+/// Rejects non-images by failing to decode.
+pub fn reencode_png(src: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
+    let img = image::open(src).map_err(|e| format!("not an image: {e}"))?;
+    img.save_with_format(dest, image::ImageFormat::Png).map_err(|e| e.to_string())
+}
+
+/// Re-encode an arbitrary image file (e.g. dropped from Explorer) into a fresh capture PNG.
+pub fn import_as_capture(app: &AppHandle, src: &std::path::Path) -> Result<PathBuf, String> {
+    let dest = capture_path(app);
+    reencode_png(src, &dest)?;
+    Ok(dest)
+}
+
 /// Save the clipboard's image (if any) as a capture PNG.
 pub fn save_clipboard_image(app: &AppHandle) -> Result<PathBuf, String> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -114,6 +128,21 @@ pub fn save_clipboard_image(app: &AppHandle) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reencode_accepts_images_and_rejects_junk() {
+        let dir = std::env::temp_dir().join(format!("dvc-reenc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("in.png");
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255])).save(&src).unwrap();
+        let dest = dir.join("out.png");
+        super::reencode_png(&src, &dest).unwrap();
+        assert!(image::open(&dest).is_ok());
+        let junk = dir.join("junk.txt");
+        std::fs::write(&junk, "not an image").unwrap();
+        assert!(super::reencode_png(&junk, &dir.join("no.png")).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     #[ignore] // needs a real display; run manually with -- --ignored
     fn captures_primary_monitor() {

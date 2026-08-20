@@ -9,7 +9,7 @@ const rect = ref<{ x: number; y: number; w: number; h: number } | null>(null);
 onMounted(async () => {
   frameSrc.value = convertFileSrc(await invoke<string>("get_frame"));
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") invoke("cancel_capture");
+    if (e.key === "Escape") invoke("cancel_overlay");
   });
 });
 
@@ -44,8 +44,10 @@ function up() {
     <div class="dim" />
     <div v-if="rect" class="sel"
       :style="{ left: rect.x + 'px', top: rect.y + 'px', width: rect.w + 'px', height: rect.h + 'px' }">
-      <img :src="frameSrc" class="frame"
-        :style="{ left: -rect.x + 'px', top: -rect.y + 'px' }" draggable="false" />
+      <div class="cut">
+        <img :src="frameSrc" class="frame"
+          :style="{ left: -rect.x + 'px', top: -rect.y + 'px' }" draggable="false" />
+      </div>
     </div>
   </div>
 </template>
@@ -53,6 +55,13 @@ function up() {
 <style scoped>
 .overlay { position: fixed; inset: 0; cursor: crosshair; overflow: hidden; user-select: none; }
 .frame { position: absolute; left: 0; top: 0; width: 100vw; height: 100vh; }
-.dim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.45); }
-.sel { position: absolute; overflow: hidden; outline: 2px solid #4da3ff; }
+.dim { position: absolute; inset: 0; background: rgba(21, 23, 28, 0.45); }
+.sel { position: absolute; overflow: visible; outline: 1.5px solid #F2A33C; }
+.sel::before, .sel::after {
+  content: ""; position: absolute; width: 14px; height: 14px;
+  border: 2.5px solid #F2A33C; pointer-events: none;
+}
+.sel::before { top: -3px; left: -3px; border-right: none; border-bottom: none; }
+.sel::after { bottom: -3px; right: -3px; border-left: none; border-top: none; }
+.cut { position: absolute; inset: 0; overflow: hidden; }
 </style>

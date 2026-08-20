@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -10,6 +10,7 @@ const hotkeyWindow = ref("");
 const hotkeyClipboard = ref("");
 const saved = ref(false);
 const error = ref("");
+const loaded = ref("");
 
 type HotkeySlot = "region" | "window" | "clipboard";
 const recording = ref<HotkeySlot | "">("");
@@ -59,6 +60,14 @@ function onRecordBlur(slot: HotkeySlot) {
   recordHint.value = "";
 }
 
+function snapshot() {
+  return JSON.stringify([
+    retentionHours.value, defaultInstruction.value,
+    hotkeyRegion.value, hotkeyWindow.value, hotkeyClipboard.value,
+  ]);
+}
+const dirty = computed(() => loaded.value !== "" && snapshot() !== loaded.value);
+
 onMounted(async () => {
   const s = await invoke<{
     retention_hours: number;
@@ -72,6 +81,14 @@ onMounted(async () => {
   hotkeyRegion.value = s.hotkey_region;
   hotkeyWindow.value = s.hotkey_window;
   hotkeyClipboard.value = s.hotkey_clipboard;
+  loaded.value = snapshot();
+  try {
+    const w = getCurrentWindow();
+    await w.show();
+    await w.setFocus();
+  } catch {
+    /* tray re-click force-shows */
+  }
 });
 
 async function save() {
@@ -96,17 +113,18 @@ async function save() {
 
 <template>
   <div class="settings">
-    <label>
+    <label class="field-label">
       Keep captures for (hours)
-      <input type="number" min="1" v-model.number="retentionHours" />
+      <input class="input" type="number" min="1" v-model.number="retentionHours" />
     </label>
-    <label>
+    <label class="field-label">
       Default instruction (when message is empty)
-      <textarea rows="3" v-model="defaultInstruction" />
+      <textarea class="textarea" rows="3" v-model="defaultInstruction" />
     </label>
-    <label>
+    <label class="field-label">
       Region capture hotkey
       <input
+        class="input"
         readonly
         :value="recording === 'region' ? 'Press keys…' : hotkeyRegion"
         :class="{ recording: recording === 'region' }"
@@ -115,9 +133,10 @@ async function save() {
         @keydown="onRecordKey($event, 'region')"
       />
     </label>
-    <label>
+    <label class="field-label">
       Active window hotkey
       <input
+        class="input"
         readonly
         :value="recording === 'window' ? 'Press keys…' : hotkeyWindow"
         :class="{ recording: recording === 'window' }"
@@ -126,9 +145,10 @@ async function save() {
         @keydown="onRecordKey($event, 'window')"
       />
     </label>
-    <label>
+    <label class="field-label">
       Clipboard image hotkey
       <input
+        class="input"
         readonly
         :value="recording === 'clipboard' ? 'Press keys…' : hotkeyClipboard"
         :class="{ recording: recording === 'clipboard' }"
@@ -138,22 +158,19 @@ async function save() {
       />
     </label>
     <p v-if="recordHint" class="hint">{{ recordHint }}</p>
-    <p v-if="error" class="error">{{ error }}</p>
+    <p v-if="error" class="error-text">{{ error }}</p>
     <div class="buttons">
-      <button @click="getCurrentWindow().close()">Cancel</button>
-      <button class="primary" @click="save">{{ saved ? "Saved" : "Save" }}</button>
+      <button class="btn btn-primary" :disabled="!dirty" @click="save">{{ saved ? "Saved" : "Save" }}</button>
     </div>
   </div>
 </template>
 
 <style scoped>
-.settings { display: flex; flex-direction: column; gap: 12px; padding: 14px; font-family: system-ui; height: 100vh; box-sizing: border-box; }
-label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-textarea { resize: none; }
-.error { font-size: 12px; color: #c00; margin: 0; }
-input[readonly] { cursor: pointer; background: #fafafa; }
-.recording { outline: 2px solid #e11; background: #fff; }
-.hint { font-size: 12px; color: #a60; margin: 0; }
+.settings { display: flex; flex-direction: column; gap: 12px; padding: 14px; font-family: var(--font-sans); background: var(--bg); height: 100vh; box-sizing: border-box; }
+label { display: flex; flex-direction: column; gap: 5px; }
+.settings input, .settings textarea { text-transform: none; letter-spacing: normal; }
+input[readonly] { cursor: pointer; background: var(--raised); font-family: var(--font-mono); font-size: 12px; }
+.recording { outline: 2px solid var(--accent); background: var(--raised); }
+.hint { font-size: 12px; color: var(--accent); margin: 0; }
 .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
-.primary { font-weight: 600; }
 </style>
