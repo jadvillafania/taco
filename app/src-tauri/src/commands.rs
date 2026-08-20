@@ -1,6 +1,21 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl, WebviewWindowBuilder};
 
 use crate::capture::{self, CaptureState};
+
+/// Serializes captures across threads: a second trigger while one is in flight is ignored,
+/// matching the old "capture already in progress" behavior the main-thread sleep gave for free.
+static CAPTURE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+struct CaptureFlight;
+impl CaptureFlight {
+    fn acquire() -> Option<Self> {
+        if CAPTURE_IN_FLIGHT.swap(true, Ordering::SeqCst) { None } else { Some(CaptureFlight) }
+    }
+}
+impl Drop for CaptureFlight {
+    fn drop(&mut self) { CAPTURE_IN_FLIGHT.store(false, Ordering::SeqCst); }
+}
 
 /// A new capture (region or full-screen) supersedes any overlay already in flight: close it and
 /// drop whatever frozen frame it was holding, so a stale overlay never outlives the capture it
@@ -67,10 +82,12 @@ pub fn start_region_capture(app: &AppHandle) {
     if app.get_webview_window("overlay").is_some() {
         return; // capture already in progress
     }
+    let Some(flight) = CaptureFlight::acquire() else { return; };
     sample_focus_title(app);
     let hid = hide_composer(app);
     let app = app.clone();
     let work = move || {
+        let _flight = flight;
         supersede_pending_overlay(&app);
         let frozen = match capture::freeze_monitor_under_cursor(&app) {
             Ok(f) => f,
@@ -369,10 +386,12 @@ pub async fn send_capture(
 }
 
 pub fn start_screen_capture(app: &AppHandle) {
+    let Some(flight) = CaptureFlight::acquire() else { return; };
     sample_focus_title(app);
     let hid = hide_composer(app);
     let app = app.clone();
     let work = move || {
+        let _flight = flight;
         supersede_pending_overlay(&app);
         match capture::save_full(&app) {
             Ok(path) => {
@@ -396,10 +415,12 @@ pub fn start_screen_capture(app: &AppHandle) {
 }
 
 pub fn start_window_capture(app: &AppHandle) {
+    let Some(flight) = CaptureFlight::acquire() else { return; };
     sample_focus_title(app);
     let hid = hide_composer(app);
     let app = app.clone();
     let work = move || {
+        let _flight = flight;
         supersede_pending_overlay(&app);
         match capture::save_active_window(&app) {
             Ok(path) => {
