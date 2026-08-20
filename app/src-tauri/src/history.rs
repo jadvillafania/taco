@@ -19,7 +19,7 @@ pub fn list_under(root: &Path) -> Vec<CaptureEntry> {
         let Ok(files) = std::fs::read_dir(day.path()) else { continue };
         for f in files.flatten() {
             let p = f.path();
-            if p.extension().map(|e| e != "png").unwrap_or(true) {
+            if p.extension().map(|e| !e.eq_ignore_ascii_case("png")).unwrap_or(true) {
                 continue;
             }
             let since_epoch = p
@@ -63,6 +63,9 @@ pub fn list_captures(app: tauri::AppHandle) -> Vec<CaptureEntry> {
 #[tauri::command]
 pub async fn resend_capture(app: tauri::AppHandle, path: String) -> Result<(), String> {
     let p = std::path::PathBuf::from(&path);
+    if !p.exists() {
+        return Err("file no longer exists".into());
+    }
     if !is_under(&captures_root(&app), &p) {
         return Err("not a capture file".into());
     }
@@ -82,6 +85,9 @@ pub async fn resend_capture(app: tauri::AppHandle, path: String) -> Result<(), S
 #[tauri::command]
 pub fn delete_capture(app: tauri::AppHandle, path: String) -> Result<(), String> {
     let p = std::path::PathBuf::from(&path);
+    if !p.exists() {
+        return Err("file no longer exists".into());
+    }
     if !is_under(&captures_root(&app), &p) {
         return Err("not a capture file".into());
     }
@@ -119,10 +125,14 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(day.join("capture-b.png"), b"x").unwrap();
         std::fs::write(day.join("notes.txt"), b"x").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(day.join("capture-c.PNG"), b"x").unwrap();
 
         let entries = list_under(&root);
-        assert_eq!(entries.len(), 2, "txt file excluded");
-        assert_eq!(entries[0].name, "capture-b.png", "newest first");
+        assert_eq!(entries.len(), 3, "txt file excluded, uppercase .PNG included");
+        assert_eq!(entries[0].name, "capture-c.PNG", "newest first, case-insensitive extension");
+        assert_eq!(entries[1].name, "capture-b.png");
+        assert_eq!(entries[2].name, "capture-a.png");
         assert!(entries[0].modified >= entries[1].modified);
 
         assert!(is_under(&root, &day.join("capture-a.png")));

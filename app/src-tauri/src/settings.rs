@@ -1,6 +1,6 @@
 use std::path::Path;
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct Settings {
     pub retention_hours: u64,
@@ -23,15 +23,17 @@ impl Default for Settings {
 }
 
 pub fn load(dir: &Path) -> Settings {
-    std::fs::read_to_string(dir.join("settings.json"))
+    let mut s: Settings = std::fs::read_to_string(dir.join("settings.json"))
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    s.retention_hours = s.retention_hours.max(1);
+    s
 }
 
 pub fn save(dir: &Path, s: &Settings) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    std::fs::write(dir.join("settings.json"), serde_json::to_string_pretty(s).expect("serialize"))
+    std::fs::write(dir.join("settings.json"), serde_json::to_string_pretty(s).map_err(std::io::Error::other)?)
 }
 
 #[tauri::command]
@@ -72,6 +74,10 @@ mod tests {
         // corrupt file -> defaults, not a panic
         std::fs::write(dir.join("settings.json"), "{nope").unwrap();
         assert_eq!(load(&dir).retention_hours, 24);
+
+        // zero retention_hours is clamped to a floor of 1
+        std::fs::write(dir.join("settings.json"), r#"{"retention_hours":0}"#).unwrap();
+        assert_eq!(load(&dir).retention_hours, 1);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

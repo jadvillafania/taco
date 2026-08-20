@@ -80,6 +80,11 @@ function move(e: MouseEvent) {
 }
 function up() {
   drawing = false;
+  const s = shapes.value[shapes.value.length - 1];
+  if (s && s.points.length < 2) {
+    shapes.value.pop();
+    redraw();
+  }
 }
 function undo() {
   shapes.value.pop();
@@ -166,6 +171,20 @@ onMounted(async () => {
   });
 });
 
+async function finishAnnotate() {
+  try {
+    if (shapes.value.length && canvasEl.value) {
+      redraw();
+      await invoke("save_annotated", { dataUrl: canvasEl.value.toDataURL("image/png"), index: current.value });
+      bust.value++;
+      shapes.value = [];
+    }
+    annotating.value = false;
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+
 async function send() {
   sending.value = true;
   error.value = "";
@@ -211,6 +230,7 @@ async function send() {
       <button :class="{ on: tool === 'arrow' }" @click="tool = 'arrow'">Arrow</button>
       <button :class="{ on: tool === 'rect' }" @click="tool = 'rect'">Rect</button>
       <button @click="undo" :disabled="!shapes.length">Undo</button>
+      <button class="done" @click="finishAnnotate">Done</button>
     </div>
     <div class="rail-row">
       <div class="rail" v-show="captures.length">
@@ -276,6 +296,7 @@ async function send() {
 .tools button { background: transparent; border: none; border-radius: 6px; padding: 4px 10px; color: var(--muted); cursor: pointer; font: 500 12px var(--font-sans); }
 .tools button.on { background: var(--bg); color: var(--accent); }
 .tools button:disabled { opacity: .45; cursor: default; }
+.tools .done { color: var(--accent); font-weight: 600; }
 .actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .actions button {
   background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 999px;
