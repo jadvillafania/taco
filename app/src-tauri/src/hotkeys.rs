@@ -110,7 +110,7 @@ const KNOWN_CHORDS: &[(&str, &str, bool)] = &[
     ("Ctrl+Shift+F", "editors — find in files", false),
     ("Alt+Enter", "Windows — properties / fullscreen", false),
     ("Ctrl+Tab", "apps — next tab", false),
-    ("F1", "apps — help", false),
+    ("F1", "apps — help", false), // unreachable via the recorder (requires a modifier); kept for hand-edited settings probes
 ];
 
 pub fn classify_chord(sc: &Shortcut) -> Option<(String, bool)> {
@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn detects_single_modifier_footguns() {
         assert!(is_single_modifier_footgun(&parse_shortcut("Ctrl+C").unwrap()));
-        assert!(is_single_modifier_footgun(&parse_shortcut("Alt+Space").unwrap()) || true); // Alt+Space is table-blocked anyway
+        assert!(is_single_modifier_footgun(&parse_shortcut("Alt+Space").unwrap())); // table-blocked anyway, but the heuristic alone would also flag it
         assert!(!is_single_modifier_footgun(&parse_shortcut("Ctrl+Shift+Space").unwrap()));
         assert!(!is_single_modifier_footgun(&parse_shortcut("Ctrl+F9").unwrap())); // fn keys are safe with one modifier
     }

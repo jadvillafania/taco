@@ -71,9 +71,10 @@ function onRecordKey(e: KeyboardEvent, slot: HotkeySlot) {
   }
 
   if (probing) return;
-  probing = true;
+  probing = true; // shared across slots: local IPC resolves in ms, per-slot flags aren't worth it
   invoke<ProbeVerdict>("probe_hotkey", { binding: chord, exclude: slot })
     .then((v) => {
+      if (recording.value !== slot) return; // cancelled (Escape/blur) while probing — discard verdict
       if (v.level === "block") {
         recordHint.value = `${v.message} — try a different combination`;
         return; // stay recording; ref untouched
