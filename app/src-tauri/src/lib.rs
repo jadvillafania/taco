@@ -61,7 +61,8 @@ pub fn run() {
             history::delete_capture,
             history::clear_captures,
             settings::get_settings,
-            settings::set_settings
+            settings::set_settings,
+            hotkeys::probe_hotkey
         ])
         .manage(capture::CaptureState(Default::default()))
         .manage(commands::ComposerGeom::default())

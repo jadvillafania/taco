@@ -15,6 +15,16 @@ const loaded = ref("");
 type HotkeySlot = "region" | "window" | "clipboard";
 const recording = ref<HotkeySlot | "">("");
 const recordHint = ref("");
+const probeMsg = ref<Partial<Record<HotkeySlot, string>>>({});
+
+async function probeSlot(slot: HotkeySlot, chord: string) {
+  try {
+    const verdict = await invoke<string>("probe_hotkey", { binding: chord, exclude: slot });
+    probeMsg.value = { ...probeMsg.value, [slot]: verdict === "available" ? "" : verdict };
+  } catch (e) {
+    probeMsg.value = { ...probeMsg.value, [slot]: String(e) };
+  }
+}
 
 const slotRef = (slot: HotkeySlot) =>
   slot === "region" ? hotkeyRegion : slot === "window" ? hotkeyWindow : hotkeyClipboard;
@@ -53,6 +63,7 @@ function onRecordKey(e: KeyboardEvent, slot: HotkeySlot) {
   slotRef(slot).value = chord;
   recording.value = "";
   recordHint.value = "";
+  probeSlot(slot, chord);
 }
 
 function onRecordBlur(slot: HotkeySlot) {
@@ -128,11 +139,12 @@ async function save() {
         readonly
         :value="recording === 'region' ? 'Press keys…' : hotkeyRegion"
         :class="{ recording: recording === 'region' }"
-        @focus="recording = 'region'; recordHint = ''"
+        @focus="recording = 'region'; recordHint = ''; probeMsg = { ...probeMsg, region: '' }"
         @blur="onRecordBlur('region')"
         @keydown="onRecordKey($event, 'region')"
       />
     </label>
+    <p v-if="probeMsg.region" class="hint">{{ probeMsg.region }} — pick a different combination or save anyway</p>
     <label class="field-label">
       Active window hotkey
       <input
@@ -140,11 +152,12 @@ async function save() {
         readonly
         :value="recording === 'window' ? 'Press keys…' : hotkeyWindow"
         :class="{ recording: recording === 'window' }"
-        @focus="recording = 'window'; recordHint = ''"
+        @focus="recording = 'window'; recordHint = ''; probeMsg = { ...probeMsg, window: '' }"
         @blur="onRecordBlur('window')"
         @keydown="onRecordKey($event, 'window')"
       />
     </label>
+    <p v-if="probeMsg.window" class="hint">{{ probeMsg.window }} — pick a different combination or save anyway</p>
     <label class="field-label">
       Clipboard image hotkey
       <input
@@ -152,11 +165,12 @@ async function save() {
         readonly
         :value="recording === 'clipboard' ? 'Press keys…' : hotkeyClipboard"
         :class="{ recording: recording === 'clipboard' }"
-        @focus="recording = 'clipboard'; recordHint = ''"
+        @focus="recording = 'clipboard'; recordHint = ''; probeMsg = { ...probeMsg, clipboard: '' }"
         @blur="onRecordBlur('clipboard')"
         @keydown="onRecordKey($event, 'clipboard')"
       />
     </label>
+    <p v-if="probeMsg.clipboard" class="hint">{{ probeMsg.clipboard }} — pick a different combination or save anyway</p>
     <p v-if="recordHint" class="hint">{{ recordHint }}</p>
     <p v-if="error" class="error-text">{{ error }}</p>
     <div class="buttons">

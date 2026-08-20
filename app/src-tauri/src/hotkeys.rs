@@ -89,6 +89,38 @@ pub fn apply(app: &tauri::AppHandle, s: &crate::settings::Settings) {
     }
 }
 
+/// Probe a chord for collisions. Windows cannot enumerate hotkey owners, so external
+/// collisions are detected by trial registration (register, then immediately unregister).
+/// `exclude` names the slot being recorded ("region"|"window"|"clipboard") so re-recording
+/// an action's own current chord doesn't count as a collision.
+#[tauri::command]
+pub fn probe_hotkey(app: tauri::AppHandle, binding: String, exclude: String) -> Result<String, String> {
+    use tauri::Manager;
+    let sc = parse_shortcut(&binding)?;
+    if let Some(hk) = app.try_state::<Hotkeys>() {
+        let ours: [(&std::sync::Mutex<Shortcut>, &str, &str); 3] = [
+            (&hk.region, "region", "Capture Region"),
+            (&hk.window, "window", "Capture Active Window"),
+            (&hk.clipboard, "clipboard", "Send Clipboard Image"),
+        ];
+        for (slot, key, label) in ours {
+            if key != exclude && *slot.lock().unwrap() == sc {
+                return Ok(format!("already used by {label}"));
+            }
+            if key == exclude && *slot.lock().unwrap() == sc {
+                return Ok("available".into()); // unchanged binding for this slot
+            }
+        }
+    }
+    let gs = app.global_shortcut();
+    if gs.register(sc).is_ok() {
+        gs.unregister(sc).ok();
+        Ok("available".into())
+    } else {
+        Ok("taken by another app".into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
