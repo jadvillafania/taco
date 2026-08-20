@@ -49,6 +49,11 @@ powershell.exe -Command "cd C:\Users\jvillafania\dev\claude_companion\app; pnpm 
 - `tauri dev` opens real windows on the Windows desktop — UI behavior
   (tray, global hotkey, capture overlay) can only be verified there, not
   in WSL.
+- New logo pipeline: the master lands in `docs/brand/taco-logo.png` (and
+  `app/src/assets/taco.png` for the About window); pad it to a square 1024×1024
+  PNG on a TRANSPARENT canvas (any tool — a one-off Rust `image`-crate bin works;
+  no ImageMagick/PIL in this WSL) saved as `docs/brand/taco-icon-1024.png`, then
+  `pnpm tauri icon docs/brand/taco-icon-1024.png`.
 - After regenerating `app/src-tauri/icons/` (`pnpm tauri icon docs/brand/taco-icon-1024.png`),
   incremental builds do NOT reliably re-embed the icon (it's baked in during
   macro expansion) — run `cargo clean -p app` and rebuild, or the tray/window
