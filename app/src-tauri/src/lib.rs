@@ -103,7 +103,7 @@ pub fn run() {
 
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("Developer Visual Companion")
+                .tooltip("Taco")
                 .menu(&menu)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "quit" => app.exit(0),
@@ -122,7 +122,7 @@ pub fn run() {
                             w.set_focus().ok();
                         } else {
                             tauri::WebviewWindowBuilder::new(app, "history", tauri::WebviewUrl::App("index.html?window=history".into()))
-                                .title("Capture History")
+                                .title("Taco: Capture History")
                                 .inner_size(560.0, 480.0)
                                 .visible(false)
                                 .build()
@@ -135,7 +135,7 @@ pub fn run() {
                             w.set_focus().ok();
                         } else {
                             tauri::WebviewWindowBuilder::new(app, "settings", tauri::WebviewUrl::App("index.html?window=settings".into()))
-                                .title("Settings")
+                                .title("Taco: Settings")
                                 .inner_size(420.0, 460.0)
                                 .visible(false)
                                 .build()
