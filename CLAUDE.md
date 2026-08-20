@@ -49,6 +49,10 @@ powershell.exe -Command "cd C:\Users\jvillafania\dev\claude_companion\app; pnpm 
 - `tauri dev` opens real windows on the Windows desktop — UI behavior
   (tray, global hotkey, capture overlay) can only be verified there, not
   in WSL.
+- After regenerating `app/src-tauri/icons/` (`pnpm tauri icon docs/brand/taco-icon-1024.png`),
+  incremental builds do NOT reliably re-embed the icon (it's baked in during
+  macro expansion) — run `cargo clean -p app` and rebuild, or the tray/window
+  icons stay stale. The Windows icon cache is NOT the culprit for a live tray icon.
 
 ## Architecture Invariants
 
