@@ -68,38 +68,49 @@ pub fn start_region_capture(app: &AppHandle) {
         return; // capture already in progress
     }
     sample_focus_title(app);
-    if hide_composer(app) { std::thread::sleep(std::time::Duration::from_millis(150)); } // let the OS repaint before we grab pixels
-    supersede_pending_overlay(app);
-    let frozen = match capture::freeze_monitor_under_cursor(app) {
-        Ok(f) => f,
-        Err(e) => {
-            reshow_composer(app);
-            return notify(app, "Capture failed", &e);
-        }
-    };
-    let (mx, my, mw, mh) = (frozen.mon_x, frozen.mon_y, frozen.mon_w, frozen.mon_h);
-    app.state::<CaptureState>().0.lock().unwrap().frozen = Some(frozen);
-    let win = match WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("index.html?window=overlay".into()))
-        .decorations(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .resizable(false)
-        .visible(false)
-        .build()
-    {
-        Ok(w) => w,
-        Err(_) => {
-            if let Some(f) = app.state::<CaptureState>().0.lock().unwrap().frozen.take() {
-                std::fs::remove_file(f.frame_png).ok();
+    let hid = hide_composer(app);
+    let app = app.clone();
+    let work = move || {
+        supersede_pending_overlay(&app);
+        let frozen = match capture::freeze_monitor_under_cursor(&app) {
+            Ok(f) => f,
+            Err(e) => {
+                reshow_composer(&app);
+                return notify(&app, "Capture failed", &e);
             }
-            reshow_composer(app);
-            return notify(app, "Capture failed", "could not open overlay window");
-        }
+        };
+        let (mx, my, mw, mh) = (frozen.mon_x, frozen.mon_y, frozen.mon_w, frozen.mon_h);
+        app.state::<CaptureState>().0.lock().unwrap().frozen = Some(frozen);
+        let win = match WebviewWindowBuilder::new(&app, "overlay", WebviewUrl::App("index.html?window=overlay".into()))
+            .decorations(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .resizable(false)
+            .visible(false)
+            .build()
+        {
+            Ok(w) => w,
+            Err(_) => {
+                if let Some(f) = app.state::<CaptureState>().0.lock().unwrap().frozen.take() {
+                    std::fs::remove_file(f.frame_png).ok();
+                }
+                reshow_composer(&app);
+                return notify(&app, "Capture failed", "could not open overlay window");
+            }
+        };
+        win.set_position(PhysicalPosition::new(mx, my)).ok();
+        win.set_size(PhysicalSize::new(mw, mh)).ok();
+        win.show().ok();
+        win.set_focus().ok();
     };
-    win.set_position(PhysicalPosition::new(mx, my)).ok();
-    win.set_size(PhysicalSize::new(mw, mh)).ok();
-    win.show().ok();
-    win.set_focus().ok();
+    if hid {
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150)); // let the OS repaint before we grab pixels
+            work();
+        });
+    } else {
+        work();
+    }
 }
 
 pub fn notify(app: &AppHandle, title: &str, body: &str) {
@@ -119,9 +130,20 @@ pub async fn region_selected(app: AppHandle, state: State<'_, CaptureState>, x: 
     let path = {
         let mut inner = state.0.lock().unwrap();
         let frozen = inner.frozen.take().ok_or("no frozen frame")?;
-        let path = capture::save_crop(&app, &frozen.image, x, y, w, h)?;
-        std::fs::remove_file(&frozen.frame_png).ok();
-        path
+        match capture::save_crop(&app, &frozen.image, x, y, w, h) {
+            Ok(p) => {
+                std::fs::remove_file(&frozen.frame_png).ok();
+                p
+            }
+            Err(e) => {
+                std::fs::remove_file(&frozen.frame_png).ok();
+                drop(inner);
+                if let Some(o) = app.get_webview_window("overlay") { o.close().ok(); }
+                reshow_composer(&app);
+                notify(&app, "Capture failed", &e);
+                return Err(e);
+            }
+        }
     };
     if let Some(o) = app.get_webview_window("overlay") { o.close().ok(); }
     push_capture(&app, path);
@@ -348,33 +370,55 @@ pub async fn send_capture(
 
 pub fn start_screen_capture(app: &AppHandle) {
     sample_focus_title(app);
-    if hide_composer(app) { std::thread::sleep(std::time::Duration::from_millis(150)); } // let the OS repaint before we grab pixels
-    supersede_pending_overlay(app);
-    match capture::save_full(app) {
-        Ok(path) => {
-            push_capture(app, path);
-            ensure_composer(app);
+    let hid = hide_composer(app);
+    let app = app.clone();
+    let work = move || {
+        supersede_pending_overlay(&app);
+        match capture::save_full(&app) {
+            Ok(path) => {
+                push_capture(&app, path);
+                ensure_composer(&app);
+            }
+            Err(e) => {
+                reshow_composer(&app);
+                notify(&app, "Capture failed", &e);
+            }
         }
-        Err(e) => {
-            reshow_composer(app);
-            notify(app, "Capture failed", &e);
-        }
+    };
+    if hid {
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150)); // let the OS repaint before we grab pixels
+            work();
+        });
+    } else {
+        work();
     }
 }
 
 pub fn start_window_capture(app: &AppHandle) {
     sample_focus_title(app);
-    if hide_composer(app) { std::thread::sleep(std::time::Duration::from_millis(150)); } // let the OS repaint before we grab pixels
-    supersede_pending_overlay(app);
-    match capture::save_active_window(app) {
-        Ok(path) => {
-            push_capture(app, path);
-            ensure_composer(app);
+    let hid = hide_composer(app);
+    let app = app.clone();
+    let work = move || {
+        supersede_pending_overlay(&app);
+        match capture::save_active_window(&app) {
+            Ok(path) => {
+                push_capture(&app, path);
+                ensure_composer(&app);
+            }
+            Err(e) => {
+                reshow_composer(&app);
+                notify(&app, "Capture failed", &e);
+            }
         }
-        Err(e) => {
-            reshow_composer(app);
-            notify(app, "Capture failed", &e);
-        }
+    };
+    if hid {
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150)); // let the OS repaint before we grab pixels
+            work();
+        });
+    } else {
+        work();
     }
 }
 
