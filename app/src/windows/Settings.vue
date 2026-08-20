@@ -25,6 +25,8 @@ const SLOT_LABELS: Record<HotkeySlot, string> = {
 
 type ProbeVerdict = { level: "ok" | "warn" | "block"; message: string };
 let probing = false;
+const origHotkeys = ref<Record<HotkeySlot, string>>({ region: "", window: "", clipboard: "" });
+const defaults = ref<Record<HotkeySlot, string>>({ region: "", window: "", clipboard: "" });
 
 const slotRef = (slot: HotkeySlot) =>
   slot === "region" ? hotkeyRegion : slot === "window" ? hotkeyWindow : hotkeyClipboard;
@@ -93,6 +95,24 @@ function onRecordBlur(slot: HotkeySlot) {
   recordHint.value = "";
 }
 
+function cancelRecording(slot: HotkeySlot) {
+  if (recording.value === slot) recording.value = "";
+  recordHint.value = "";
+}
+function revertSlot(slot: HotkeySlot) {
+  slotRef(slot).value = origHotkeys.value[slot];
+  probeMsg.value = { ...probeMsg.value, [slot]: "" };
+}
+
+function resetHotkeys() {
+  (["region", "window", "clipboard"] as HotkeySlot[]).forEach((s) => {
+    slotRef(s).value = defaults.value[s];
+  });
+  probeMsg.value = {};
+  recordHint.value = "";
+  if (recording.value) recording.value = "";
+}
+
 function snapshot() {
   return JSON.stringify([
     retentionHours.value, defaultInstruction.value,
@@ -114,7 +134,10 @@ onMounted(async () => {
   hotkeyRegion.value = s.hotkey_region;
   hotkeyWindow.value = s.hotkey_window;
   hotkeyClipboard.value = s.hotkey_clipboard;
+  origHotkeys.value = { region: s.hotkey_region, window: s.hotkey_window, clipboard: s.hotkey_clipboard };
   loaded.value = snapshot();
+  const d = await invoke<{ hotkey_region: string; hotkey_window: string; hotkey_clipboard: string }>("get_default_settings");
+  defaults.value = { region: d.hotkey_region, window: d.hotkey_window, clipboard: d.hotkey_clipboard };
   try {
     const w = getCurrentWindow();
     await w.show();
@@ -156,43 +179,75 @@ async function save() {
     </label>
     <label class="field-label">
       Region capture hotkey
-      <input
-        class="input"
-        readonly
-        :value="recording === 'region' ? 'Press keys…' : hotkeyRegion"
-        :class="{ recording: recording === 'region' }"
-        @focus="recording = 'region'; recordHint = ''; probeMsg = { ...probeMsg, region: '' }"
-        @blur="onRecordBlur('region')"
-        @keydown="onRecordKey($event, 'region')"
-      />
+      <div class="hotkey-wrap">
+        <input
+          class="input"
+          readonly
+          :value="recording === 'region' ? 'Press keys…' : hotkeyRegion"
+          :class="{ recording: recording === 'region' }"
+          @focus="recording = 'region'; recordHint = ''; probeMsg = { ...probeMsg, region: '' }"
+          @blur="onRecordBlur('region')"
+          @keydown="onRecordKey($event, 'region')"
+        />
+        <button
+          v-if="recording === 'region' || hotkeyRegion !== origHotkeys.region"
+          class="field-btn"
+          :title="recording === 'region' ? 'Cancel recording' : 'Revert to saved'"
+          @mousedown.prevent
+          @click="recording === 'region' ? cancelRecording('region') : revertSlot('region')"
+        >{{ recording === 'region' ? '✕' : '↺' }}</button>
+      </div>
     </label>
     <p v-if="probeMsg.region" class="hint">{{ probeMsg.region }}</p>
     <label class="field-label">
       Active window hotkey
-      <input
-        class="input"
-        readonly
-        :value="recording === 'window' ? 'Press keys…' : hotkeyWindow"
-        :class="{ recording: recording === 'window' }"
-        @focus="recording = 'window'; recordHint = ''; probeMsg = { ...probeMsg, window: '' }"
-        @blur="onRecordBlur('window')"
-        @keydown="onRecordKey($event, 'window')"
-      />
+      <div class="hotkey-wrap">
+        <input
+          class="input"
+          readonly
+          :value="recording === 'window' ? 'Press keys…' : hotkeyWindow"
+          :class="{ recording: recording === 'window' }"
+          @focus="recording = 'window'; recordHint = ''; probeMsg = { ...probeMsg, window: '' }"
+          @blur="onRecordBlur('window')"
+          @keydown="onRecordKey($event, 'window')"
+        />
+        <button
+          v-if="recording === 'window' || hotkeyWindow !== origHotkeys.window"
+          class="field-btn"
+          :title="recording === 'window' ? 'Cancel recording' : 'Revert to saved'"
+          @mousedown.prevent
+          @click="recording === 'window' ? cancelRecording('window') : revertSlot('window')"
+        >{{ recording === 'window' ? '✕' : '↺' }}</button>
+      </div>
     </label>
     <p v-if="probeMsg.window" class="hint">{{ probeMsg.window }}</p>
     <label class="field-label">
       Clipboard image hotkey
-      <input
-        class="input"
-        readonly
-        :value="recording === 'clipboard' ? 'Press keys…' : hotkeyClipboard"
-        :class="{ recording: recording === 'clipboard' }"
-        @focus="recording = 'clipboard'; recordHint = ''; probeMsg = { ...probeMsg, clipboard: '' }"
-        @blur="onRecordBlur('clipboard')"
-        @keydown="onRecordKey($event, 'clipboard')"
-      />
+      <div class="hotkey-wrap">
+        <input
+          class="input"
+          readonly
+          :value="recording === 'clipboard' ? 'Press keys…' : hotkeyClipboard"
+          :class="{ recording: recording === 'clipboard' }"
+          @focus="recording = 'clipboard'; recordHint = ''; probeMsg = { ...probeMsg, clipboard: '' }"
+          @blur="onRecordBlur('clipboard')"
+          @keydown="onRecordKey($event, 'clipboard')"
+        />
+        <button
+          v-if="recording === 'clipboard' || hotkeyClipboard !== origHotkeys.clipboard"
+          class="field-btn"
+          :title="recording === 'clipboard' ? 'Cancel recording' : 'Revert to saved'"
+          @mousedown.prevent
+          @click="recording === 'clipboard' ? cancelRecording('clipboard') : revertSlot('clipboard')"
+        >{{ recording === 'clipboard' ? '✕' : '↺' }}</button>
+      </div>
     </label>
     <p v-if="probeMsg.clipboard" class="hint">{{ probeMsg.clipboard }}</p>
+    <button
+      v-if="hotkeyRegion !== defaults.region || hotkeyWindow !== defaults.window || hotkeyClipboard !== defaults.clipboard"
+      class="link-btn"
+      @click="resetHotkeys"
+    >Reset hotkeys to defaults</button>
     <p v-if="recordHint" class="hint">{{ recordHint }}</p>
     <p v-if="error" class="error-text">{{ error }}</p>
     <div class="buttons">
@@ -209,4 +264,10 @@ input[readonly] { cursor: pointer; background: var(--raised); font-family: var(-
 .recording { outline: 2px solid var(--accent); background: var(--raised); }
 .hint { font-size: 12px; color: var(--accent); margin: 0; }
 .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
+.hotkey-wrap { position: relative; }
+.hotkey-wrap input { width: 100%; padding-right: 30px; box-sizing: border-box; }
+.field-btn { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 2px 5px; }
+.field-btn:hover { color: var(--accent); }
+.link-btn { background: transparent; border: none; color: var(--muted); font: 500 12px var(--font-sans); cursor: pointer; padding: 0; text-align: left; }
+.link-btn:hover { color: var(--accent); }
 </style>
