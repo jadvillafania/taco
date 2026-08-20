@@ -23,20 +23,8 @@ const SLOT_LABELS: Record<HotkeySlot, string> = {
   clipboard: "Clipboard image",
 };
 
-async function probeSlot(slot: HotkeySlot, chord: string) {
-  for (const other of ["region", "window", "clipboard"] as HotkeySlot[]) {
-    if (other !== slot && slotRef(other).value === chord) {
-      probeMsg.value = { ...probeMsg.value, [slot]: `already used by ${SLOT_LABELS[other]} (unsaved)` };
-      return;
-    }
-  }
-  try {
-    const verdict = await invoke<string>("probe_hotkey", { binding: chord, exclude: slot });
-    probeMsg.value = { ...probeMsg.value, [slot]: verdict === "available" ? "" : verdict };
-  } catch (e) {
-    probeMsg.value = { ...probeMsg.value, [slot]: String(e) };
-  }
-}
+type ProbeVerdict = { level: "ok" | "warn" | "block"; message: string };
+let probing = false;
 
 const slotRef = (slot: HotkeySlot) =>
   slot === "region" ? hotkeyRegion : slot === "window" ? hotkeyWindow : hotkeyClipboard;
@@ -72,10 +60,31 @@ function onRecordKey(e: KeyboardEvent, slot: HotkeySlot) {
     recordHint.value = "Add a modifier (Ctrl, Alt, Shift)";
     return;
   }
-  slotRef(slot).value = chord;
-  recording.value = "";
-  recordHint.value = "";
-  probeSlot(slot, chord);
+  for (const other of ["region", "window", "clipboard"] as HotkeySlot[]) {
+    if (other !== slot && slotRef(other).value === chord) {
+      slotRef(slot).value = chord;
+      probeMsg.value = { ...probeMsg.value, [slot]: `already used by ${SLOT_LABELS[other]} (unsaved)` };
+      recording.value = "";
+      recordHint.value = "";
+      return;
+    }
+  }
+
+  if (probing) return;
+  probing = true;
+  invoke<ProbeVerdict>("probe_hotkey", { binding: chord, exclude: slot })
+    .then((v) => {
+      if (v.level === "block") {
+        recordHint.value = `${v.message} — try a different combination`;
+        return; // stay recording; ref untouched
+      }
+      slotRef(slot).value = chord;
+      probeMsg.value = { ...probeMsg.value, [slot]: v.level === "warn" ? v.message : "" };
+      recording.value = "";
+      recordHint.value = "";
+    })
+    .catch((e) => { recordHint.value = String(e); })
+    .finally(() => { probing = false; });
 }
 
 function onRecordBlur(slot: HotkeySlot) {
@@ -156,7 +165,7 @@ async function save() {
         @keydown="onRecordKey($event, 'region')"
       />
     </label>
-    <p v-if="probeMsg.region" class="hint">{{ probeMsg.region }} — pick a different combination or save anyway</p>
+    <p v-if="probeMsg.region" class="hint">{{ probeMsg.region }}</p>
     <label class="field-label">
       Active window hotkey
       <input
@@ -169,7 +178,7 @@ async function save() {
         @keydown="onRecordKey($event, 'window')"
       />
     </label>
-    <p v-if="probeMsg.window" class="hint">{{ probeMsg.window }} — pick a different combination or save anyway</p>
+    <p v-if="probeMsg.window" class="hint">{{ probeMsg.window }}</p>
     <label class="field-label">
       Clipboard image hotkey
       <input
@@ -182,7 +191,7 @@ async function save() {
         @keydown="onRecordKey($event, 'clipboard')"
       />
     </label>
-    <p v-if="probeMsg.clipboard" class="hint">{{ probeMsg.clipboard }} — pick a different combination or save anyway</p>
+    <p v-if="probeMsg.clipboard" class="hint">{{ probeMsg.clipboard }}</p>
     <p v-if="recordHint" class="hint">{{ recordHint }}</p>
     <p v-if="error" class="error-text">{{ error }}</p>
     <div class="buttons">
