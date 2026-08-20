@@ -32,16 +32,50 @@ pub fn ensure_composer(app: &AppHandle) {
     }
 }
 
+/// Hide the composer while a capture is in flight so it doesn't photobomb the shot.
+/// Returns true when a composer was actually hidden (caller waits for the OS to repaint).
+fn hide_composer(app: &AppHandle) -> bool {
+    if let Some(w) = app.get_webview_window("composer") {
+        if w.is_visible().unwrap_or(false) {
+            w.hide().ok();
+            return true;
+        }
+    }
+    false
+}
+
+fn reshow_composer(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("composer") {
+        w.show().ok();
+        w.set_focus().ok();
+    }
+}
+
+/// Update the session-ranking hint only when the composer itself isn't the
+/// foreground window (clicking a composer button must not rank by our own title).
+fn sample_focus_title(app: &AppHandle) {
+    let composer_focused = app
+        .get_webview_window("composer")
+        .and_then(|w| w.is_focused().ok())
+        .unwrap_or(false);
+    if !composer_focused {
+        app.state::<CaptureState>().0.lock().unwrap().focus_title = crate::sessions::foreground_title();
+    }
+}
+
 pub fn start_region_capture(app: &AppHandle) {
     if app.get_webview_window("overlay").is_some() {
         return; // capture already in progress
     }
-    let focus = crate::sessions::foreground_title(); // before our windows take focus
+    sample_focus_title(app);
+    if hide_composer(app) { std::thread::sleep(std::time::Duration::from_millis(150)); } // let the OS repaint before we grab pixels
     supersede_pending_overlay(app);
-    app.state::<CaptureState>().0.lock().unwrap().focus_title = focus;
     let frozen = match capture::freeze_monitor_under_cursor(app) {
         Ok(f) => f,
-        Err(e) => return notify(app, "Capture failed", &e),
+        Err(e) => {
+            reshow_composer(app);
+            return notify(app, "Capture failed", &e);
+        }
     };
     let (mx, my, mw, mh) = (frozen.mon_x, frozen.mon_y, frozen.mon_w, frozen.mon_h);
     app.state::<CaptureState>().0.lock().unwrap().frozen = Some(frozen);
@@ -58,6 +92,7 @@ pub fn start_region_capture(app: &AppHandle) {
             if let Some(f) = app.state::<CaptureState>().0.lock().unwrap().frozen.take() {
                 std::fs::remove_file(f.frame_png).ok();
             }
+            reshow_composer(app);
             return notify(app, "Capture failed", "could not open overlay window");
         }
     };
@@ -214,6 +249,25 @@ pub async fn cancel_capture(app: AppHandle, state: State<'_, CaptureState>) -> R
 }
 
 #[tauri::command]
+pub async fn trigger_capture(app: AppHandle, kind: String) -> Result<(), String> {
+    match kind.as_str() {
+        "region" => { start_region_capture(&app); Ok(()) }
+        "screen" => { start_screen_capture(&app); Ok(()) }
+        _ => Err("unknown capture kind".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn cancel_overlay(app: AppHandle, state: State<'_, CaptureState>) -> Result<(), ()> {
+    if let Some(f) = state.0.lock().unwrap().frozen.take() {
+        std::fs::remove_file(f.frame_png).ok();
+    }
+    if let Some(w) = app.get_webview_window("overlay") { w.close().ok(); }
+    reshow_composer(&app);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn get_captures(state: State<CaptureState>) -> Vec<String> {
     state.0.lock().unwrap().captures.iter().map(|p| p.to_string_lossy().into_owned()).collect()
 }
@@ -293,35 +347,40 @@ pub async fn send_capture(
 }
 
 pub fn start_screen_capture(app: &AppHandle) {
-    let focus = crate::sessions::foreground_title();
+    sample_focus_title(app);
+    if hide_composer(app) { std::thread::sleep(std::time::Duration::from_millis(150)); } // let the OS repaint before we grab pixels
     supersede_pending_overlay(app);
-    app.state::<CaptureState>().0.lock().unwrap().focus_title = focus;
     match capture::save_full(app) {
         Ok(path) => {
             push_capture(app, path);
             ensure_composer(app);
         }
-        Err(e) => notify(app, "Capture failed", &e),
+        Err(e) => {
+            reshow_composer(app);
+            notify(app, "Capture failed", &e);
+        }
     }
 }
 
 pub fn start_window_capture(app: &AppHandle) {
-    let focus = crate::sessions::foreground_title();
+    sample_focus_title(app);
+    if hide_composer(app) { std::thread::sleep(std::time::Duration::from_millis(150)); } // let the OS repaint before we grab pixels
     supersede_pending_overlay(app);
-    app.state::<CaptureState>().0.lock().unwrap().focus_title = focus;
     match capture::save_active_window(app) {
         Ok(path) => {
             push_capture(app, path);
             ensure_composer(app);
         }
-        Err(e) => notify(app, "Capture failed", &e),
+        Err(e) => {
+            reshow_composer(app);
+            notify(app, "Capture failed", &e);
+        }
     }
 }
 
 pub fn start_clipboard_capture(app: &AppHandle) {
-    let focus = crate::sessions::foreground_title();
+    sample_focus_title(app);
     supersede_pending_overlay(app);
-    app.state::<CaptureState>().0.lock().unwrap().focus_title = focus;
     match capture::save_clipboard_image(app) {
         Ok(path) => {
             push_capture(app, path);

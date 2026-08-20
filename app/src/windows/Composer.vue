@@ -128,6 +128,15 @@ async function removeAt(i: number) {
   await invoke("remove_capture", { index: i });
 }
 
+async function addCapture(kind: "region" | "screen") {
+  error.value = "";
+  try {
+    await invoke("trigger_capture", { kind });
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+
 onMounted(async () => {
   listen("captures-changed", () => refreshCaptures(true));
   await refreshCaptures(true);
@@ -203,10 +212,16 @@ async function send() {
       <button :class="{ on: tool === 'rect' }" @click="tool = 'rect'">Rect</button>
       <button @click="undo" :disabled="!shapes.length">Undo</button>
     </div>
-    <div class="rail" v-show="captures.length">
-      <div v-for="(c, i) in captures" :key="c" class="thumb" :class="{ sel: i === current }" @click="current = i; shapes = []; annotating = false">
-        <img :src="convertFileSrc(c) + '?v=' + bust" draggable="false" />
-        <button class="thumb-x" title="Remove from message" @click.stop="removeAt(i)">×</button>
+    <div class="rail-row">
+      <div class="rail" v-show="captures.length">
+        <div v-for="(c, i) in captures" :key="c" class="thumb" :class="{ sel: i === current }" @click="current = i; shapes = []; annotating = false">
+          <img :src="convertFileSrc(c) + '?v=' + bust" draggable="false" />
+          <button class="thumb-x" title="Remove from message" @click.stop="removeAt(i)">×</button>
+        </div>
+      </div>
+      <div class="add-row">
+        <button class="add-btn" :disabled="sending" @click="addCapture('region')">+ Region</button>
+        <button class="add-btn" :disabled="sending" @click="addCapture('screen')">+ Screen</button>
       </div>
     </div>
     <div class="actions">
@@ -240,7 +255,15 @@ async function send() {
 .canvas { max-width: 100%; max-height: 100%; cursor: crosshair; }
 .empty-drop { align-items: center; justify-content: center; border: 1px dashed var(--line); border-radius: 6px; }
 .empty-drop p { color: var(--muted); text-align: center; font-size: 12.5px; }
-.rail { display: flex; gap: 6px; overflow-x: auto; padding: 2px; }
+.rail-row { display: flex; gap: 8px; align-items: center; }
+.rail { flex: 1; min-width: 0; display: flex; gap: 6px; overflow-x: auto; padding: 2px; }
+.add-row { display: flex; gap: 6px; flex: none; margin-left: auto; }
+.add-btn {
+  background: transparent; color: var(--muted); border: 1px dashed var(--line); border-radius: 999px;
+  font: 500 12px var(--font-sans); padding: 4px 11px; cursor: pointer;
+}
+.add-btn:hover { color: var(--accent); border-color: var(--accent); }
+.add-btn:disabled { opacity: .5; cursor: default; }
 .thumb { position: relative; flex: none; width: 56px; height: 40px; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; cursor: pointer; }
 .thumb.sel { border-color: var(--accent); }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }

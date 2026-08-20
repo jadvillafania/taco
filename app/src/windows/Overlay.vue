@@ -9,7 +9,7 @@ const rect = ref<{ x: number; y: number; w: number; h: number } | null>(null);
 onMounted(async () => {
   frameSrc.value = convertFileSrc(await invoke<string>("get_frame"));
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") invoke("cancel_capture");
+    if (e.key === "Escape") invoke("cancel_overlay");
   });
 });
 

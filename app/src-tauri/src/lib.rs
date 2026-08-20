@@ -45,6 +45,8 @@ pub fn run() {
             commands::get_frame,
             commands::region_selected,
             commands::cancel_capture,
+            commands::cancel_overlay,
+            commands::trigger_capture,
             commands::get_captures,
             commands::remove_capture,
             commands::import_clipboard,
