@@ -35,3 +35,5 @@ Deferred work, in rough priority order. Each lands as its own small branch when 
 - ~~`retention_hours: 0` accepted if settings.json is hand-edited (UI clamps to ≥1)~~ — fixed:
   `settings::load` now clamps `retention_hours` to a floor of 1 server-side.
 - ~~`Settings` struct lacks `Debug` derive~~ — fixed: `Debug` added to the derive list.
+- clear_captures pending-composer ordering — already resolved: history.rs closes the composer
+  window and clears CaptureState.captures before remove_dir_all.
