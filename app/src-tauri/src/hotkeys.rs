@@ -89,14 +89,75 @@ pub fn apply(app: &tauri::AppHandle, s: &crate::settings::Settings) {
     }
 }
 
-/// Probe a chord for collisions. Windows cannot enumerate hotkey owners, so external
-/// collisions are detected by trial registration (register, then immediately unregister).
-/// `exclude` names the slot being recorded ("region"|"window"|"clipboard") so re-recording
-/// an action's own current chord doesn't count as a collision.
+/// Well-known Windows / ubiquitous app shortcuts. No OS API exposes these —
+/// this is a curated table (same approach PowerToys takes). (accelerator, label, blocked)
+const KNOWN_CHORDS: &[(&str, &str, bool)] = &[
+    // blocked: breaks the OS or cannot function as a global hotkey
+    ("Alt+F4", "Windows — close window", true),
+    ("Alt+Tab", "Windows — switch windows", true),
+    ("Alt+Space", "Windows — window menu", true),
+    ("Ctrl+Esc", "Windows — Start menu", true),
+    ("Ctrl+Shift+Esc", "Windows — Task Manager", true),
+    // warn: famous multi-modifier app shortcuts
+    ("Ctrl+Shift+T", "browsers — reopen closed tab", false),
+    ("Ctrl+Shift+N", "browsers — incognito window", false),
+    ("Ctrl+Shift+P", "browsers/editors — private window / command palette", false),
+    ("Ctrl+Shift+I", "browsers — developer tools", false),
+    ("Ctrl+Shift+C", "terminals/devtools — copy / inspect", false),
+    ("Ctrl+Shift+V", "editors/terminals — paste without formatting", false),
+    ("Ctrl+Shift+Z", "editors — redo", false),
+    ("Ctrl+Shift+S", "editors — save as", false),
+    ("Ctrl+Shift+F", "editors — find in files", false),
+    ("Alt+Enter", "Windows — properties / fullscreen", false),
+    ("Ctrl+Tab", "apps — next tab", false),
+    ("F1", "apps — help", false), // unreachable via the recorder (requires a modifier); kept for hand-edited settings probes
+];
+
+pub fn classify_chord(sc: &Shortcut) -> Option<(String, bool)> {
+    for (accel, label, blocked) in KNOWN_CHORDS {
+        if let Ok(known) = parse_shortcut(accel) {
+            if known == *sc {
+                return Some((label.to_string(), *blocked));
+            }
+        }
+    }
+    None
+}
+
+/// One modifier + a non-function key is almost always some app's accelerator
+/// (Ctrl+C = copy). Function keys are conventionally safe with a single modifier.
+pub fn is_single_modifier_footgun(sc: &Shortcut) -> bool {
+    use tauri_plugin_global_shortcut::Modifiers;
+    let count = [Modifiers::CONTROL, Modifiers::ALT, Modifiers::SHIFT, Modifiers::SUPER]
+        .iter()
+        .filter(|m| sc.mods.contains(**m))
+        .count();
+    let is_fn_key = format!("{:?}", sc.key).starts_with('F')
+        && format!("{:?}", sc.key).len() <= 3
+        && format!("{:?}", sc.key)[1..].chars().all(|c| c.is_ascii_digit());
+    count <= 1 && !is_fn_key
+}
+
+#[derive(serde::Serialize)]
+pub struct ProbeVerdict {
+    pub level: String,   // "ok" | "warn" | "block"
+    pub message: String, // empty when ok
+}
+
+fn verdict(level: &str, message: impl Into<String>) -> Result<ProbeVerdict, String> {
+    Ok(ProbeVerdict { level: level.into(), message: message.into() })
+}
+
+/// Probe a chord for collisions and known-shortcut conflicts, returning a tiered verdict.
+/// Windows cannot enumerate hotkey owners, so external collisions are detected by trial
+/// registration (register, then immediately unregister). `exclude` names the slot being
+/// recorded ("region"|"window"|"clipboard") so re-recording an action's own current chord
+/// doesn't count as a collision.
 #[tauri::command]
-pub fn probe_hotkey(app: tauri::AppHandle, binding: String, exclude: String) -> Result<String, String> {
+pub fn probe_hotkey(app: tauri::AppHandle, binding: String, exclude: String) -> Result<ProbeVerdict, String> {
     use tauri::Manager;
     let sc = parse_shortcut(&binding)?;
+
     if let Some(hk) = app.try_state::<Hotkeys>() {
         let ours: [(&std::sync::Mutex<Shortcut>, &str, &str); 3] = [
             (&hk.region, "region", "Capture Region"),
@@ -105,19 +166,34 @@ pub fn probe_hotkey(app: tauri::AppHandle, binding: String, exclude: String) -> 
         ];
         for (slot, key, label) in ours {
             if key != exclude && *slot.lock().unwrap() == sc {
-                return Ok(format!("already used by {label}"));
+                return verdict("warn", format!("already used by {label}"));
             }
             if key == exclude && *slot.lock().unwrap() == sc {
-                return Ok("available".into()); // unchanged binding for this slot
+                return verdict("ok", ""); // unchanged binding for this slot
             }
         }
     }
+
+    if let Some((label, blocked)) = classify_chord(&sc) {
+        if blocked {
+            return verdict("block", format!("reserved by Windows — {label}"));
+        }
+        return verdict("warn", format!("commonly used: {label}"));
+    }
+
+    if is_single_modifier_footgun(&sc) {
+        return verdict(
+            "warn",
+            "single-modifier shortcuts usually collide with app shortcuts (e.g. Ctrl+C = copy) — consider adding a second modifier",
+        );
+    }
+
     let gs = app.global_shortcut();
     if gs.register(sc).is_ok() {
         gs.unregister(sc).ok();
-        Ok("available".into())
+        verdict("ok", "")
     } else {
-        Ok("taken by another app".into())
+        verdict("warn", "taken by another app")
     }
 }
 
@@ -132,5 +208,35 @@ mod tests {
         }
         assert!(parse_shortcut("NotAKey+Q").is_err());
         assert!(parse_shortcut("").is_err());
+    }
+
+    #[test]
+    fn known_table_fully_parses() {
+        for (accel, _, _) in KNOWN_CHORDS {
+            assert!(parse_shortcut(accel).is_ok(), "table entry must parse: {accel}");
+        }
+    }
+
+    #[test]
+    fn classifies_reserved_and_common() {
+        let esc = parse_shortcut("Ctrl+Shift+Esc").unwrap();
+        let (label, blocked) = classify_chord(&esc).unwrap();
+        assert!(blocked);
+        assert!(label.contains("Task Manager"));
+
+        let t = parse_shortcut("Ctrl+Shift+T").unwrap();
+        let (label, blocked) = classify_chord(&t).unwrap();
+        assert!(!blocked);
+        assert!(label.to_lowercase().contains("tab"));
+
+        assert!(classify_chord(&parse_shortcut("Ctrl+Alt+V").unwrap()).is_none());
+    }
+
+    #[test]
+    fn detects_single_modifier_footguns() {
+        assert!(is_single_modifier_footgun(&parse_shortcut("Ctrl+C").unwrap()));
+        assert!(is_single_modifier_footgun(&parse_shortcut("Alt+Space").unwrap())); // table-blocked anyway, but the heuristic alone would also flag it
+        assert!(!is_single_modifier_footgun(&parse_shortcut("Ctrl+Shift+Space").unwrap()));
+        assert!(!is_single_modifier_footgun(&parse_shortcut("Ctrl+F9").unwrap())); // fn keys are safe with one modifier
     }
 }
