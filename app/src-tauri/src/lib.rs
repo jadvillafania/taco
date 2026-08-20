@@ -1,5 +1,5 @@
 use tauri::{
-    menu::{Menu, MenuItem, CheckMenuItem},
+    menu::{Menu, MenuItem, CheckMenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
     Manager, RunEvent,
 };
@@ -94,8 +94,17 @@ pub fn run() {
             let auto_on = app.autolaunch().is_enabled().unwrap_or(false);
             let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, auto_on, None::<&str>)?;
             let autostart_handle = autostart.clone();
+            let about = MenuItem::with_id(app, "about", "About Taco", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Exit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open_comp, &region, &screen, &window, &clip, &history, &settings, &install_shim, &remove_shim, &autostart, &quit])?;
+            let menu = Menu::with_items(app, &[
+                &open_comp, &region, &screen, &window, &clip,
+                &PredefinedMenuItem::separator(app)?,
+                &history, &settings,
+                &PredefinedMenuItem::separator(app)?,
+                &install_shim, &remove_shim, &autostart,
+                &PredefinedMenuItem::separator(app)?,
+                &about, &quit,
+            ])?;
 
             app.manage(crate::hotkeys::TrayLabels {
                 region: region.clone(),
@@ -139,6 +148,22 @@ pub fn run() {
                             tauri::WebviewWindowBuilder::new(app, "settings", tauri::WebviewUrl::App("index.html?window=settings".into()))
                                 .title("Taco: Settings")
                                 .inner_size(420.0, 460.0)
+                                .visible(false)
+                                .build()
+                                .ok();
+                        }
+                    }
+                    "about" => {
+                        if let Some(w) = app.get_webview_window("about") {
+                            w.show().ok();
+                            w.set_focus().ok();
+                        } else {
+                            tauri::WebviewWindowBuilder::new(app, "about", tauri::WebviewUrl::App("index.html?window=about".into()))
+                                .title("About Taco")
+                                .inner_size(440.0, 240.0)
+                                .resizable(false)
+                                .maximizable(false)
+                                .minimizable(false)
                                 .visible(false)
                                 .build()
                                 .ok();
