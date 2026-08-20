@@ -3,6 +3,7 @@ use tauri::{
     tray::TrayIconBuilder,
     Manager, RunEvent,
 };
+use tauri_plugin_autostart::ManagerExt;
 
 mod wslpath;
 mod payload;
@@ -88,7 +89,6 @@ pub fn run() {
             let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
             let install_shim = MenuItem::with_id(app, "install_shim", "Install WSL Shim…", true, None::<&str>)?;
             let remove_shim = MenuItem::with_id(app, "remove_shim", "Remove WSL Shim", true, None::<&str>)?;
-            use tauri_plugin_autostart::ManagerExt;
             let auto_on = app.autolaunch().is_enabled().unwrap_or(false);
             let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, auto_on, None::<&str>)?;
             let autostart_handle = autostart.clone();
@@ -171,7 +171,6 @@ pub fn run() {
                         });
                     }
                     "autostart" => {
-                        use tauri_plugin_autostart::ManagerExt;
                         let al = app.autolaunch();
                         let was_enabled = al.is_enabled().unwrap_or(false);
                         let res = if was_enabled { al.disable() } else { al.enable() };

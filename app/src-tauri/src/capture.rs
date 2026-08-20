@@ -87,7 +87,7 @@ pub fn relative_crop(win: (i32, i32, i32, i32), mon: (i32, i32, u32, u32)) -> Op
 // ponytail: a window spanning two monitors is cropped to the one under its center;
 // full spanning needs stitched captures — add if anyone actually works that way.
 pub fn save_active_window(app: &AppHandle) -> Result<PathBuf, String> {
-    let (l, t, r, b) = crate::sessions::foreground_rect().ok_or("no foreground window")?;
+    let (l, t, r, b) = crate::sessions::foreground_rect().ok_or("could not read the active window bounds")?;
     let m = xcap::Monitor::from_point((l + r) / 2, (t + b) / 2).map_err(|e| e.to_string())?;
     let (image, mon_x, mon_y) = capture_monitor(&m)?;
     let (x, y, w, h) = relative_crop((l, t, r, b), (mon_x, mon_y, image.width(), image.height()))
@@ -118,7 +118,7 @@ pub fn save_clipboard_image(app: &AppHandle) -> Result<PathBuf, String> {
     let img = app
         .clipboard()
         .read_image()
-        .map_err(|_| "No image on the clipboard")?;
+        .map_err(|e| format!("No image on the clipboard ({e})"))?;
     let rgba = RgbaImage::from_raw(img.width(), img.height(), img.rgba().to_vec())
         .ok_or("clipboard image has unexpected layout")?;
     let path = capture_path(app);
