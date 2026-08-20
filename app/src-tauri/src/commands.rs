@@ -180,7 +180,7 @@ pub fn open_composer(app: &AppHandle) {
         c.close().ok();
     }
     let win = match WebviewWindowBuilder::new(app, "composer", WebviewUrl::App("index.html?window=composer".into()))
-        .title("Send to Claude Code")
+        .title("Taco: Send to Claude Code")
         .inner_size(420.0, 380.0)
         .min_inner_size(420.0, 380.0)
         .always_on_top(true)
