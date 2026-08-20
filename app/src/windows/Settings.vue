@@ -17,7 +17,19 @@ const recording = ref<HotkeySlot | "">("");
 const recordHint = ref("");
 const probeMsg = ref<Partial<Record<HotkeySlot, string>>>({});
 
+const SLOT_LABELS: Record<HotkeySlot, string> = {
+  region: "Region capture",
+  window: "Active window",
+  clipboard: "Clipboard image",
+};
+
 async function probeSlot(slot: HotkeySlot, chord: string) {
+  for (const other of ["region", "window", "clipboard"] as HotkeySlot[]) {
+    if (other !== slot && slotRef(other).value === chord) {
+      probeMsg.value = { ...probeMsg.value, [slot]: `already used by ${SLOT_LABELS[other]} (unsaved)` };
+      return;
+    }
+  }
   try {
     const verdict = await invoke<string>("probe_hotkey", { binding: chord, exclude: slot });
     probeMsg.value = { ...probeMsg.value, [slot]: verdict === "available" ? "" : verdict };
