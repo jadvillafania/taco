@@ -64,3 +64,12 @@ pub fn remove(distro: &str) -> Result<(), String> {
     ), None)?;
     Ok(())
 }
+
+pub fn native_bin_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into()))
+        .join("DeveloperVisualCompanion").join("bin")
+}
+
+pub fn native_shim_exe() -> std::path::PathBuf {
+    native_bin_dir().join("dvc-shim.exe")
+}

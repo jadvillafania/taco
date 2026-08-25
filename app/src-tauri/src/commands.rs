@@ -359,7 +359,7 @@ pub async fn send_capture(
     let payload = crate::payload::build_payload(message.as_deref(), &wsl_paths, &default_instruction);
 
     if let Some(s) = &session {
-        match crate::tier1::send_via_shim(&s.distro, &s.sid, &payload) {
+        match crate::tier1::send_via_shim(&crate::sessions::Host::Wsl { distro: s.distro.clone() }, &s.sid, &payload) {
             crate::tier1::Outcome::Ack => {
                 state.0.lock().unwrap().captures.clear();
                 if let Some(w) = app.get_webview_window("composer") { w.close().ok(); }
