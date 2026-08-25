@@ -15,7 +15,7 @@ const message = ref("");
 const error = ref("");
 const sending = ref(false);
 
-type Session = { sid: string; distro: string; project: string; cwd: string };
+type Session = { sid: string; host: "wsl" | "windows"; distro?: string; project: string; cwd: string };
 const sessions = ref<Session[]>([]);
 const selected = ref<string>(""); // "" = clipboard
 
@@ -197,7 +197,7 @@ async function send() {
     const s = selected.value === "" ? null : sessions.value[Number(selected.value)];
     await invoke("send_capture", {
       message: message.value || null,
-      session: s ? { sid: s.sid, distro: s.distro, project: s.project } : null,
+      session: s ? { sid: s.sid, host: s.host, distro: s.distro, project: s.project } : null,
     });
   } catch (e) {
     error.value = String(e); // captures are preserved; user can retry (spec §22)
@@ -249,8 +249,8 @@ async function send() {
     </div>
     <textarea v-model="message" rows="3" class="textarea" placeholder="Optional message… (default: analyze in current context)" />
     <select v-model="selected" class="selectbox">
-      <option v-for="(s, i) in sessions" :key="s.sid" :value="String(i)">
-        Claude Code: {{ s.project }} ({{ s.distro }} {{ s.cwd }})
+      <option v-for="(s, i) in sessions" :key="s.host + s.sid" :value="String(i)">
+        Claude Code: {{ s.project }} ({{ s.host === "wsl" ? s.distro : "Windows" }} · {{ s.cwd }})
       </option>
       <option value="">Clipboard — paste manually</option>
     </select>
