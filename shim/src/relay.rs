@@ -130,16 +130,22 @@ pub fn run(args: &[String]) -> i32 {
         });
     }
 
-    // SIGWINCH -> pty resize
+    // terminal resize -> pty resize
+    // ponytail: 500ms size poll instead of SIGWINCH/console events — one code path
+    // for unix+windows; event-driven resize if the lag ever bothers anyone.
     {
         let master = master.clone();
-        if let Ok(mut signals) = signal_hook::iterator::Signals::new([signal_hook::consts::SIGWINCH]) {
-            std::thread::spawn(move || {
-                for _ in signals.forever() {
-                    master.lock().unwrap().resize(term_size()).ok();
+        std::thread::spawn(move || {
+            let mut prev = term_size();
+            loop {
+                std::thread::sleep(Duration::from_millis(500));
+                let now = term_size();
+                if now.rows != prev.rows || now.cols != prev.cols {
+                    master.lock().unwrap().resize(now).ok();
+                    prev = now;
                 }
-            });
-        }
+            }
+        });
     }
 
     crate::relay::spawn_socket_listener(listener, &shared); // Task 6 (no-op stub until then)
