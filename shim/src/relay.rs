@@ -90,6 +90,47 @@ impl Drop for RawGuard {
     }
 }
 
+#[cfg(windows)]
+const DSR: &[u8] = b"\x1b[6n";
+// ponytail: we always answer "cursor is at 1;1" instead of tracking the real cursor.
+// Only used when stdout is a pipe -- there is no visible cursor to be wrong about, and
+// home is what a fresh terminal would report. A real emulator would parse the stream.
+#[cfg(windows)]
+const CPR: &[u8] = b"\x1b[1;1R";
+
+/// True when our stdin is a real console -- i.e. a terminal is on the other side of
+/// our stdout and will answer ConPTY's cursor-position query itself. Answering on top
+/// of it would leave a stray `ESC[1;1R` in the child's input, so we only answer when
+/// this is false.
+#[cfg(windows)]
+fn stdin_is_console() -> bool {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Console::{GetConsoleMode, GetStdHandle, STD_INPUT_HANDLE};
+    unsafe {
+        let h = GetStdHandle(STD_INPUT_HANDLE);
+        if h == INVALID_HANDLE_VALUE || h.is_null() { return false; }
+        let mut mode = 0u32;
+        GetConsoleMode(h, &mut mode) != 0
+    }
+}
+
+/// Reply CPR for each DSR in the pty's output. `carry` keeps the tail of the previous
+/// chunk so a query split across two reads is still matched; it is trimmed so a query
+/// can never be counted twice. Writes bypass the stdin relay on purpose: this is our
+/// reply, not the user typing, and must not disturb the injection idle gate.
+#[cfg(windows)]
+fn answer_dsr(carry: &mut Vec<u8>, chunk: &[u8], writer: &Arc<Mutex<Box<dyn Write + Send>>>) {
+    carry.extend_from_slice(chunk);
+    let hits = carry.windows(DSR.len()).filter(|w| *w == DSR).count();
+    let keep = carry.len().saturating_sub(DSR.len() - 1);
+    carry.drain(..keep);
+    for _ in 0..hits {
+        let mut w = writer.lock().unwrap();
+        if w.write_all(CPR).is_err() { return; }
+        w.flush().ok();
+    }
+}
+
 fn term_size() -> PtySize {
     let (cols, rows) = terminal_size::terminal_size()
         .map(|(w, h)| (w.0, h.0))
@@ -146,19 +187,33 @@ pub fn run(args: &[String]) -> i32 {
     };
 
     // pty -> stdout
-    std::thread::spawn(move || {
-        let mut out = std::io::stdout();
-        let mut buf = [0u8; 8192];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    if out.write_all(&buf[..n]).is_err() { break; }
-                    out.flush().ok();
+    {
+        // ConPTY is created with PSUEDOCONSOLE_INHERIT_CURSOR (portable-pty's choice),
+        // so it opens by asking the *terminal* where the cursor is (DSR, `ESC[6n`) and
+        // will not run the child's console session until it gets a CPR answer back on
+        // the pty's input. A real terminal on our stdout answers on our behalf; a pipe
+        // (tests, programmatic drivers) never does, and the child then hangs before it
+        // has run a single instruction. Answer it ourselves in exactly that case.
+        #[cfg(windows)]
+        let dsr_writer = if stdin_is_console() { None } else { Some(shared.writer.clone()) };
+        std::thread::spawn(move || {
+            let mut out = std::io::stdout();
+            let mut buf = [0u8; 8192];
+            #[cfg(windows)]
+            let mut carry: Vec<u8> = Vec::new();
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        #[cfg(windows)]
+                        if let Some(w) = &dsr_writer { answer_dsr(&mut carry, &buf[..n], w); }
+                        if out.write_all(&buf[..n]).is_err() { break; }
+                        out.flush().ok();
+                    }
                 }
             }
-        }
-    });
+        });
+    }
 
     // stdin -> pty (tracks last_input for the injection idle gate)
     {
