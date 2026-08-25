@@ -706,6 +706,17 @@ the path:
 Analyze this screenshot in the context of the current task.
 ```
 
+### 15.6 Native Windows Tier 1 (M4 amendment)
+
+Tier 1 is host-agnostic. `dvc-shim` builds for Linux (musl, WSL) and Windows
+(ConPTY + AF_UNIX via uds_windows); sessions from both hosts appear in one
+merged, ranked list, each tagged with its host. Path flavor follows the
+target: `/mnt/c/...` for WSL sessions, `C:/...` for native ones; with no
+session selected, the `wsl_connected` setting picks the flavor. The WSL
+session scan (wsl.exe + \\wsl$ probes) only runs when `wsl_connected` is on
+(flipped by WSL shim install/remove). §15.4 rejections stand unchanged —
+the shim owns a real ConPTY; console input injection remains rejected.
+Design: docs/superpowers/specs/2026-08-25-native-windows-tier1-design.md.
 
 ---
 
