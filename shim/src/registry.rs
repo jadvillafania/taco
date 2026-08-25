@@ -70,20 +70,22 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    // Merged (was two #[test] fns): both mutated the shared DVC_RUNTIME_DIR env var and
+    // raced under the default parallel test runner. One test = one thread of execution,
+    // so the mutation order is deterministic. Coverage is unchanged: override honored on
+    // both platforms; Windows LOCALAPPDATA fallback exercised when the override is absent.
     #[test]
-    fn runtime_dir_honors_override() {
+    fn runtime_dir_honors_override_and_windows_fallback() {
         unsafe { std::env::set_var("DVC_RUNTIME_DIR", "/tmp/dvc-test-x") };
         assert_eq!(runtime_dir(), std::path::PathBuf::from("/tmp/dvc-test-x"));
-        unsafe { std::env::remove_var("DVC_RUNTIME_DIR") };
-    }
 
-    #[test]
-    #[cfg(windows)]
-    fn runtime_dir_uses_localappdata_on_windows() {
         unsafe { std::env::remove_var("DVC_RUNTIME_DIR") };
-        let d = runtime_dir();
-        let want = std::path::PathBuf::from(std::env::var("LOCALAPPDATA").unwrap())
-            .join("DeveloperVisualCompanion").join("run");
-        assert_eq!(d, want);
+        #[cfg(windows)]
+        {
+            let d = runtime_dir();
+            let want = std::path::PathBuf::from(std::env::var("LOCALAPPDATA").unwrap())
+                .join("DeveloperVisualCompanion").join("run");
+            assert_eq!(d, want);
+        }
     }
 }
