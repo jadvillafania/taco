@@ -1,6 +1,6 @@
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
-use std::os::unix::net::UnixListener;
+use crate::sockets::UnixListener;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -171,7 +171,7 @@ pub fn spawn_socket_listener(listener: UnixListener, shared: &Shared) {
 }
 
 fn handle_conn(
-    stream: std::os::unix::net::UnixStream,
+    stream: crate::sockets::UnixStream,
     writer: &Arc<Mutex<Box<dyn Write + Send>>>,
     last_input: &Arc<Mutex<Instant>>,
 ) {

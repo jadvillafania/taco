@@ -1,6 +1,6 @@
 use crate::protocol::{self, Msg};
 use std::io::{BufRead, Read, Write};
-use std::os::unix::net::UnixStream;
+use crate::sockets::UnixStream;
 use std::time::Duration;
 
 pub fn send(args: &[String]) -> i32 {
