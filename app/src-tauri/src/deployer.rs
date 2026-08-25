@@ -160,6 +160,37 @@ pub fn remove_windows() -> Result<(), String> {
     Ok(())
 }
 
+fn set_wsl_connected(app: &tauri::AppHandle, on: bool) -> Result<(), String> {
+    let dir = crate::retention::data_dir(app);
+    let mut s = crate::settings::load(&dir);
+    s.wsl_connected = on;
+    crate::settings::save(&dir, &s).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn install_wsl_shim(app: tauri::AppHandle) -> Result<(), String> {
+    let d = default_distro()?;
+    install(&app, &d)?;
+    set_wsl_connected(&app, true)
+}
+
+#[tauri::command]
+pub async fn remove_wsl_shim(app: tauri::AppHandle) -> Result<(), String> {
+    let d = default_distro()?;
+    remove(&d)?;
+    set_wsl_connected(&app, false)
+}
+
+#[tauri::command]
+pub async fn install_native_shim(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    install_windows(&app)
+}
+
+#[tauri::command]
+pub async fn remove_native_shim() -> Result<(), String> {
+    remove_windows()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

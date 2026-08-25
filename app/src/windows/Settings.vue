@@ -147,6 +147,28 @@ onMounted(async () => {
   }
 });
 
+type ShimHost = "native" | "wsl";
+const shimBusy = ref<ShimHost | "">("");
+const shimMsg = ref<Partial<Record<ShimHost, string>>>({});
+
+async function shimAction(host: ShimHost, action: "install" | "remove") {
+  shimBusy.value = host;
+  shimMsg.value = { ...shimMsg.value, [host]: "" };
+  const cmd = `${action}_${host === "wsl" ? "wsl" : "native"}_shim`;
+  try {
+    // ()-returning commands yield null; install_native_shim may yield a warning
+    const warn = await invoke<string | null>(cmd);
+    const base = action === "install"
+      ? "Installed — restart your terminal, then run 'claude' as usual."
+      : "Removed — profile wrapper deleted.";
+    shimMsg.value = { ...shimMsg.value, [host]: warn ? `${base} ⚠ ${warn}` : base };
+  } catch (e) {
+    shimMsg.value = { ...shimMsg.value, [host]: String(e) };
+  } finally {
+    shimBusy.value = "";
+  }
+}
+
 async function save() {
   error.value = "";
   try {
@@ -243,6 +265,27 @@ async function save() {
       </div>
     </label>
     <p v-if="probeMsg.clipboard" class="hint">{{ probeMsg.clipboard }}</p>
+    <label class="field-label">
+      Instant delivery (Tier 1)
+      <div class="shim-row">
+        <div class="shim-text">
+          <strong>Windows (native)</strong>
+          <small>Copies dvc-shim.exe into %LOCALAPPDATA% and adds a 'claude' function to your PowerShell profile. Reversible. cmd.exe sessions keep using clipboard delivery.</small>
+        </div>
+        <button class="field-btn" :disabled="shimBusy !== ''" @click="shimAction('native', 'install')">Install</button>
+        <button class="field-btn" :disabled="shimBusy !== ''" @click="shimAction('native', 'remove')">Remove</button>
+      </div>
+      <p v-if="shimMsg.native" class="hint">{{ shimMsg.native }}</p>
+      <div class="shim-row">
+        <div class="shim-text">
+          <strong>WSL</strong>
+          <small>Copies dvc-shim into your WSL distro (~/.local/share/dvc/) and adds a 'claude' alias to ~/.bashrc. Also enables WSL session discovery. Reversible.</small>
+        </div>
+        <button class="field-btn" :disabled="shimBusy !== ''" @click="shimAction('wsl', 'install')">Install</button>
+        <button class="field-btn" :disabled="shimBusy !== ''" @click="shimAction('wsl', 'remove')">Remove</button>
+      </div>
+      <p v-if="shimMsg.wsl" class="hint">{{ shimMsg.wsl }}</p>
+    </label>
     <button
       v-if="hotkeyRegion !== defaults.region || hotkeyWindow !== defaults.window || hotkeyClipboard !== defaults.clipboard"
       class="link-btn"
@@ -270,4 +313,10 @@ input[readonly] { cursor: pointer; background: var(--raised); font-family: var(-
 .field-btn:hover { color: var(--accent); }
 .link-btn { background: transparent; border: none; color: var(--muted); font: 500 12px var(--font-sans); cursor: pointer; padding: 0; text-align: left; }
 .link-btn:hover { color: var(--accent); }
+.shim-row { display: flex; gap: 8px; align-items: center; }
+.shim-text { flex: 1; display: flex; flex-direction: column; }
+.shim-text small { color: var(--muted); font-size: 11px; }
+/* .field-btn is absolutely positioned for the hotkey-wrap context; reset that
+   here so it renders as a normal inline button inside the flex shim-row. */
+.shim-row .field-btn { position: static; transform: none; }
 </style>
