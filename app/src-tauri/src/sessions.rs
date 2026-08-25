@@ -1,9 +1,17 @@
 use std::path::Path;
 
+#[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "host", rename_all = "lowercase")]
+pub enum Host {
+    Wsl { distro: String },
+    Windows,
+}
+
 #[derive(Clone, serde::Serialize)]
 pub struct Session {
     pub sid: String,
-    pub distro: String,
+    #[serde(flatten)]
+    pub host: Host,
     pub project: String,
     pub cwd: String,
 }
@@ -17,6 +25,18 @@ pub fn parse_wsl_list(bytes: &[u8]) -> Vec<String> {
         .collect()
 }
 
+fn session_from_file(p: &Path, host: Host) -> Option<Session> {
+    if p.extension().map(|e| e != "json").unwrap_or(true) { return None; }
+    let txt = std::fs::read_to_string(p).ok()?;
+    let v = serde_json::from_str::<serde_json::Value>(&txt).ok()?;
+    Some(Session {
+        sid: p.file_stem().unwrap_or_default().to_string_lossy().into_owned(),
+        host,
+        project: v["project"].as_str().unwrap_or("?").to_string(),
+        cwd: v["cwd"].as_str().unwrap_or("").to_string(),
+    })
+}
+
 pub fn sessions_under(base: &Path, distro: &str) -> Vec<Session> {
     let mut out = Vec::new();
     let Ok(uids) = std::fs::read_dir(base) else { return out };
@@ -25,18 +45,22 @@ pub fn sessions_under(base: &Path, distro: &str) -> Vec<Session> {
         let Ok(files) = std::fs::read_dir(&dvc) else { continue };
         for f in files.flatten() {
             let p = f.path();
-            if p.extension().map(|e| e != "json").unwrap_or(true) { continue; }
-            let Ok(txt) = std::fs::read_to_string(&p) else { continue };
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) else { continue };
-            out.push(Session {
-                sid: p.file_stem().unwrap_or_default().to_string_lossy().into_owned(),
-                distro: distro.to_string(),
-                project: v["project"].as_str().unwrap_or("?").to_string(),
-                cwd: v["cwd"].as_str().unwrap_or("").to_string(),
-            });
+            if let Some(s) = session_from_file(&p, Host::Wsl { distro: distro.to_string() }) {
+                out.push(s);
+            }
         }
     }
     out
+}
+
+pub fn sessions_in_flat_dir(dir: &Path) -> Vec<Session> {
+    let Ok(files) = std::fs::read_dir(dir) else { return Vec::new() };
+    files.flatten().filter_map(|f| session_from_file(&f.path(), Host::Windows)).collect()
+}
+
+pub fn native_run_dir() -> Option<std::path::PathBuf> {
+    std::env::var("LOCALAPPDATA").ok()
+        .map(|l| std::path::PathBuf::from(l).join("DeveloperVisualCompanion").join("run"))
 }
 
 pub fn list_sessions() -> Vec<Session> {
@@ -128,7 +152,40 @@ mod tests {
     }
 
     fn sess(project: &str) -> Session {
-        Session { sid: project.into(), distro: "Ubuntu".into(), project: project.into(), cwd: format!("/home/j/{project}") }
+        Session {
+            sid: project.into(),
+            host: Host::Wsl { distro: "Ubuntu".into() },
+            project: project.into(),
+            cwd: format!("/home/j/{project}"),
+        }
+    }
+
+    #[test]
+    fn session_json_is_flat_and_host_tagged() {
+        let v = serde_json::to_value(sess("p")).unwrap();
+        assert_eq!(v["host"], "wsl");
+        assert_eq!(v["distro"], "Ubuntu");
+        let w = Session { host: Host::Windows, ..sess("p") };
+        let v = serde_json::to_value(w).unwrap();
+        assert_eq!(v["host"], "windows");
+        assert!(v.get("distro").is_none());
+    }
+
+    #[test]
+    fn scans_flat_native_registry() {
+        let dir = std::env::temp_dir().join(format!("dvc-nat-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("7.json"),
+            r#"{"pid":7,"cwd":"C:\\Users\\j\\dev\\my-app","distro":"","project":"my-app","socket":"C:\\x\\7.sock","started_at":1}"#,
+        ).unwrap();
+        std::fs::write(dir.join("junk.txt"), "x").unwrap();
+        let s = sessions_in_flat_dir(&dir);
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].sid, "7");
+        assert_eq!(s[0].host, Host::Windows);
+        assert_eq!(s[0].project, "my-app");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -165,6 +222,7 @@ mod tests {
         let s = sessions_under(&base, "Ubuntu");
         assert_eq!(s.len(), 1);
         assert_eq!(s[0].sid, "42");
+        assert_eq!(s[0].host, Host::Wsl { distro: "Ubuntu".into() });
         assert_eq!(s[0].project, "my-app");
         std::fs::remove_dir_all(&base).ok();
     }
