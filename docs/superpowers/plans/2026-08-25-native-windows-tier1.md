@@ -174,6 +174,9 @@ pub fn runtime_dir() -> PathBuf {
     }
     #[cfg(windows)]
     {
+        // ponytail: AF_UNIX sun_path caps at ~108 bytes; this is ~75 for normal
+        // usernames — a very long username breaks bind (shim exits before spawning
+        // claude). Shorten to %LOCALAPPDATA%\dvc\run if anyone ever hits it.
         match std::env::var("LOCALAPPDATA") {
             Ok(l) => PathBuf::from(l).join("DeveloperVisualCompanion").join("run"),
             Err(_) => std::env::temp_dir().join("dvc"),
@@ -262,7 +265,7 @@ impl Drop for RawGuard {
 - [ ] **Step 2: Both platforms compile; unit tests pass on both**
 
 Run (WSL): `cargo test` — PASS.
-Run (interop): `powershell.exe -Command "cd C:\Users\jvillafania\dev\claude_companion\shim; cargo test --lib --bins 2>&1 | Select-Object -Last 15"`
+Run (interop): `powershell.exe -Command "cd C:\Users\jvillafania\dev\claude_companion\shim; cargo test --bins 2>&1 | Select-Object -Last 15"` (the crate has no lib target — `--lib` would hard-error; `--bins` runs the `src/*.rs` unit tests and skips the not-yet-ported e2e suite)
 Expected: build succeeds; unit tests (protocol, registry incl. the Task 2 Windows test, client arg parsing if any) PASS. e2e is Task 4.
 
 If `windows-sys` 0.60 renames a constant, `cargo doc`/compiler errors name the right one — fix the import, don't downgrade the crate.
@@ -296,7 +299,7 @@ use std::os::unix::net::UnixStream;
 use uds_windows::UnixStream;
 ```
 
-Rename `spawn_cat` to `spawn_echo` (update the three call sites) and cfg the child:
+Rename `spawn_cat` to `spawn_echo` (update all four call sites — one per test) and cfg the child:
 
 ```rust
 pub fn spawn_echo(tmp: &std::path::Path) -> Child {
@@ -349,7 +352,19 @@ Run (WSL): `cargo test` — Expected: PASS (behavioral no-op there).
 Run (interop): `powershell.exe -Command "cd C:\Users\jvillafania\dev\claude_companion\shim; cargo test 2>&1 | Select-Object -Last 25"`
 Expected: all tests PASS, including e2e (registry file + `.sock` created, injection acked, `user-typing` refusal, client exit codes 0/3).
 
-Known-risk note for the executor: if `cmd /c more` misbehaves under ConPTY (pagination prompt, EOF ignored), swap the Windows child to `&["run", "findstr", "/r", "^"]` — same echo semantics, same `end_input` EOF. If EOF still doesn't end the child, report back with the observed output rather than force-killing the shim (the registry-cleanup assertions depend on a clean child exit).
+Known-risk notes for the executor:
+
+1. If `cmd /c more` misbehaves under ConPTY (pagination prompt, EOF ignored), swap the Windows child to `&["run", "findstr", "/r", "^"]` — same echo semantics, same `end_input` EOF. If EOF still doesn't end the child, report back with the observed output rather than force-killing the shim (the registry-cleanup assertions depend on a clean child exit).
+2. The `assert!(!sock.exists())` in `relays_io_and_manages_registry` will likely FAIL on Windows: `relay::run` deletes the socket file while the accept-loop thread still holds the bound listener, and Windows (unlike Linux unlink) refuses to delete a bound AF_UNIX socket file. Expected fix — relax that one assertion, don't restructure the accept loop:
+
+```rust
+    // windows can't unlink a still-bound AF_UNIX socket file; the pre-bind
+    // remove_file in relay::run handles staleness on the next start.
+    #[cfg(unix)]
+    assert!(!sock.exists(), "socket removed on exit");
+```
+
+The `.json` registry assertion stays unconditional on both platforms (plain file, always deletable). Task 13 records the lingering-stale-`.sock` behavior in improvements.md.
 
 - [ ] **Step 5: Commit**
 
@@ -506,9 +521,39 @@ git commit -m "feat(app): Host enum on Session + flat native registry scan"
 
 (Insert before the corrupt-file assertions; note the earlier saves in that test will need `..Default::default()` untouched — the struct gains a field, existing literal already uses `..Default::default()`.)
 
+Also in `settings.rs` tests — the frontend's Save posts a PARTIAL settings object (see `Settings.vue::save()`), which serde-defaults `wsl_connected` to `false`; without protection every Settings save silently disconnects WSL:
+
+```rust
+    #[test]
+    fn frontend_save_cannot_clobber_wsl_connected() {
+        let dir = std::env::temp_dir().join(format!("dvc-merge-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        save(&dir, &Settings { wsl_connected: true, ..Default::default() }).unwrap();
+        // incoming from the frontend: wsl_connected serde-defaulted to false
+        let merged = merge_frontend(&dir, Settings { retention_hours: 72, ..Default::default() });
+        assert!(merged.wsl_connected, "deployer-owned flag survives a frontend save");
+        assert_eq!(merged.retention_hours, 72);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+```
+
 `sessions.rs`:
 
 ```rust
+    #[test]
+    fn wsl_error_output_yields_no_distros() {
+        use std::os::windows::process::ExitStatusExt;
+        let utf16 = |s: &str| s.encode_utf16().flat_map(|u| u.to_le_bytes()).collect::<Vec<u8>>();
+        let fail = std::process::Output {
+            status: std::process::ExitStatus::from_raw(1),
+            stdout: utf16("There is no distribution with the supplied name."),
+            stderr: Vec::new(),
+        };
+        assert!(distros_from(&fail).is_empty(), "error text is not a distro list");
+        let ok = std::process::Output { status: std::process::ExitStatus::from_raw(0), stdout: utf16("Ubuntu\r\n"), stderr: Vec::new() };
+        assert_eq!(distros_from(&ok), vec!["Ubuntu"]);
+    }
+
     #[test]
     fn wsl_scan_is_gated() {
         // gate off: must return instantly with no wsl.exe spawn — timing is the tell
@@ -526,7 +571,29 @@ Expected: compile FAIL (`wsl_connected` field, `list_sessions` arity).
 
 - [ ] **Step 3: Implement**
 
-`settings.rs`: add `pub wsl_connected: bool` to the struct and `wsl_connected: false` to `Default` (serde `#[serde(default)]` on the struct already covers old files on disk).
+`settings.rs`: add `pub wsl_connected: bool` to the struct and `wsl_connected: false` to `Default` (serde `#[serde(default)]` on the struct already covers old files on disk). Then protect the flag from partial frontend saves:
+
+```rust
+/// The frontend's Save posts only the fields it edits; deployer-owned state
+/// (wsl_connected) must survive by re-reading it from disk.
+pub fn merge_frontend(dir: &Path, mut incoming: Settings) -> Settings {
+    incoming.wsl_connected = load(dir).wsl_connected;
+    incoming
+}
+```
+
+and route `set_settings` through it:
+
+```rust
+#[tauri::command]
+pub fn set_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String> {
+    let dir = crate::retention::data_dir(&app);
+    let settings = merge_frontend(&dir, settings);
+    save(&dir, &settings).map_err(|e| e.to_string())?;
+    crate::hotkeys::apply(&app, &settings);
+    Ok(())
+}
+```
 
 `sessions.rs`:
 
@@ -541,6 +608,12 @@ pub fn list_sessions(wsl_connected: bool) -> Vec<Session> {
     sessions
 }
 
+/// Guard first: a failed wsl.exe prints error text, not a distro list (bug fix).
+pub fn distros_from(out: &std::process::Output) -> Vec<String> {
+    if !out.status.success() { return Vec::new(); }
+    parse_wsl_list(&out.stdout)
+}
+
 fn wsl_sessions() -> Vec<Session> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -549,11 +622,8 @@ fn wsl_sessions() -> Vec<Session> {
         .creation_flags(CREATE_NO_WINDOW)
         .output()
     else { return Vec::new() };
-    if !out.status.success() {
-        return Vec::new(); // error text is not a distro list (bug fix)
-    }
     let mut sessions = Vec::new();
-    for distro in parse_wsl_list(&out.stdout) {
+    for distro in distros_from(&out) {
         // stale registry files (crashed shims) surface here; Tier 1 send fails -> Tier 2 fallback
         let base = std::path::PathBuf::from(format!(r"\\wsl$\{distro}\run\user"));
         sessions.extend(sessions_under(&base, &distro));
@@ -702,7 +772,13 @@ pub fn send_via_shim(host: &crate::sessions::Host, sid: &str, payload: &str) -> 
 }
 ```
 
-(Keep `parse_response` and its tests untouched.) Fix the one call site in `commands.rs` mechanically for now: `send_via_shim(&s.host, &s.sid, &payload)` — `TargetSession` gains `host` in Task 8; if that ordering hurts, do the minimal `TargetSession` field change here and say so in the commit body.
+(Keep `parse_response` and its tests untouched.) In the spawn-error branch, the message `"wsl.exe failed: {e}"` is now wrong for the native arm — change it to `format!("shim spawn failed: {e}")`.
+
+Bridge the one call site in `commands.rs` mechanically — at this task, `TargetSession` still carries `distro: String` (its rewrite is Task 8's job; do NOT change the struct here, the frontend doesn't send `host` until Task 9):
+
+```rust
+        match crate::tier1::send_via_shim(&crate::sessions::Host::Wsl { distro: s.distro.clone() }, &s.sid, &payload) {
+```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -768,7 +844,19 @@ In `send_capture`, replace the path-mapping block (the `wsl_paths` `collect::<Re
     }
 ```
 
-The clipboard tail stays as-is (payload now already holds the right flavor). Delete the old `default_instruction` load further down (it moved up). The old `let wsl_paths = ... .collect::<Result<Vec<_>, _>>()?;` hard-fail must be gone.
+The clipboard tail stays, but its notification body gains a degraded arm (don't tell the user the session was "busy" when the real cause was an unmappable path):
+
+```rust
+    let body = if degraded {
+        "Capture path can't map into WSL — payload copied with Windows paths. Paste into your Claude Code terminal"
+    } else if session.is_some() {
+        "Session busy or unreachable — payload copied. Paste into your Claude Code terminal"
+    } else {
+        "Ready — paste into your Claude Code terminal"
+    };
+```
+
+Delete the old `default_instruction` load further down (it moved up). The old `let wsl_paths = ... .collect::<Result<Vec<_>, _>>()?;` hard-fail must be gone.
 
 - [ ] **Step 2: Add a compile-level regression test for TargetSession's wire shape**
 
@@ -855,7 +943,8 @@ git commit -m "feat(ui): composer shows host-tagged sessions (Ubuntu vs Windows)
   - `deployer::append_block(existing: &str) -> String` — idempotent append.
   - `deployer::strip_block(existing: &str) -> String` — removes the marker block, leaves everything else byte-identical.
   - `deployer::profile_paths() -> Vec<PathBuf>` — WinPS 5.1 profile always; pwsh 7 profile when `pwsh` is on PATH.
-  - `deployer::install_windows(app: &tauri::AppHandle) -> Result<(), String>`, `deployer::remove_windows() -> Result<(), String>`.
+  - `deployer::install_windows(app: &tauri::AppHandle) -> Result<Option<String>, String>` — `Ok(Some(warning))` when the install succeeded but won't take effect (execution policy); `deployer::remove_windows() -> Result<(), String>`.
+  - `deployer::exec_policy_warning() -> Option<String>` — `Some(...)` when PowerShell profile scripts are disabled (`Restricted`/`AllSigned`), which would make the installed `claude` function silently inert.
 
 - [ ] **Step 1: Write the failing tests (pure text functions — the file IO wrapper stays thin and untested)**
 
@@ -936,7 +1025,25 @@ pub fn profile_paths() -> Vec<std::path::PathBuf> {
     v
 }
 
-pub fn install_windows(app: &tauri::AppHandle) -> Result<(), String> {
+/// Default client ExecutionPolicy is Restricted, under which profile.ps1 never
+/// runs and the installed function is silently inert — warn instead of lying.
+pub fn exec_policy_warning() -> Option<String> {
+    let out = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", "Get-ExecutionPolicy"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    let pol = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if pol == "Restricted" || pol == "AllSigned" {
+        Some(format!(
+            "PowerShell execution policy is {pol} — profile scripts are disabled, so the 'claude' wrapper won't load. Run: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned"
+        ))
+    } else {
+        None
+    }
+}
+
+pub fn install_windows(app: &tauri::AppHandle) -> Result<Option<String>, String> {
     use tauri::Manager;
     let src = app.path()
         .resolve("resources/dvc-shim.exe", tauri::path::BaseDirectory::Resource)
@@ -944,13 +1051,13 @@ pub fn install_windows(app: &tauri::AppHandle) -> Result<(), String> {
     let bin = native_bin_dir();
     std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
     std::fs::copy(&src, native_shim_exe())
-        .map_err(|e| format!("shim exe missing ({e}) — build shim/ on Windows first"))?;
+        .map_err(|e| format!("could not install shim exe ({e}) — is a shim session still running, or was resources/dvc-shim.exe not built?"))?;
     for p in profile_paths() {
         if let Some(dir) = p.parent() { std::fs::create_dir_all(dir).map_err(|e| e.to_string())?; }
         let existing = std::fs::read_to_string(&p).unwrap_or_default();
         std::fs::write(&p, append_block(&existing)).map_err(|e| e.to_string())?;
     }
-    Ok(())
+    Ok(exec_policy_warning())
 }
 
 pub fn remove_windows() -> Result<(), String> {
@@ -987,7 +1094,7 @@ git commit -m "feat(app): Windows shim deployer — PowerShell profile block + e
 - Modify: `app/src/windows/Settings.vue` (new "Instant delivery" section)
 
 **Interfaces:**
-- Produces commands (all `Result<(), String>`): `install_wsl_shim(app)`, `remove_wsl_shim(app)`, `install_native_shim(app)`, `remove_native_shim()`. WSL pair also writes `wsl_connected` true/false. The Settings row + its explanatory copy IS the consent surface (replaces the old blocking dialog).
+- Produces commands: `install_wsl_shim(app)`, `remove_wsl_shim(app)`, `remove_native_shim()` (all `Result<(), String>`) and `install_native_shim(app) -> Result<Option<String>, String>` (the optional execution-policy warning from Task 10; the frontend treats `invoke`'s `null` — what the `()`-returning commands yield — and `Some(warning)` uniformly). WSL pair also writes `wsl_connected` true/false. The Settings row + its explanatory copy IS the consent surface (replaces the old blocking dialog).
 
 - [ ] **Step 1: Add the commands to `deployer.rs`**
 
@@ -1014,7 +1121,7 @@ pub async fn remove_wsl_shim(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn install_native_shim(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn install_native_shim(app: tauri::AppHandle) -> Result<Option<String>, String> {
     install_windows(&app)
 }
 
@@ -1043,13 +1150,12 @@ async function shimAction(host: ShimHost, action: "install" | "remove") {
   shimMsg.value = { ...shimMsg.value, [host]: "" };
   const cmd = `${action}_${host === "wsl" ? "wsl" : "native"}_shim`;
   try {
-    await invoke(cmd);
-    shimMsg.value = {
-      ...shimMsg.value,
-      [host]: action === "install"
-        ? "Installed — restart your terminal, then run 'claude' as usual."
-        : "Removed — wrapper and binary deleted.",
-    };
+    // ()-returning commands yield null; install_native_shim may yield a warning
+    const warn = await invoke<string | null>(cmd);
+    const base = action === "install"
+      ? "Installed — restart your terminal, then run 'claude' as usual."
+      : "Removed — profile wrapper deleted.";
+    shimMsg.value = { ...shimMsg.value, [host]: warn ? `${base} ⚠ ${warn}` : base };
   } catch (e) {
     shimMsg.value = { ...shimMsg.value, [host]: String(e) };
   } finally {
@@ -1058,33 +1164,33 @@ async function shimAction(host: ShimHost, action: "install" | "remove") {
 }
 ```
 
-In the template, after the existing hotkeys section (match surrounding markup/classes — reuse the section/label styles already in the file):
+In the template, after the last hotkey `field-label` block (the file's existing classes are `field-label`, `input`, `hint`, `field-btn` — reuse `field-label` and `hint`; only `.shim-row` is new):
 
 ```html
-    <div class="section">
-      <label class="label">Instant delivery (Tier 1)</label>
+    <label class="field-label">
+      Instant delivery (Tier 1)
       <div class="shim-row">
         <div class="shim-text">
           <strong>Windows (native)</strong>
           <small>Copies dvc-shim.exe into %LOCALAPPDATA% and adds a 'claude' function to your PowerShell profile. Reversible. cmd.exe sessions keep using clipboard delivery.</small>
         </div>
-        <button :disabled="shimBusy !== ''" @click="shimAction('native', 'install')">Install</button>
-        <button :disabled="shimBusy !== ''" @click="shimAction('native', 'remove')">Remove</button>
+        <button class="field-btn" :disabled="shimBusy !== ''" @click="shimAction('native', 'install')">Install</button>
+        <button class="field-btn" :disabled="shimBusy !== ''" @click="shimAction('native', 'remove')">Remove</button>
       </div>
-      <p v-if="shimMsg.native" class="shim-msg">{{ shimMsg.native }}</p>
+      <p v-if="shimMsg.native" class="hint">{{ shimMsg.native }}</p>
       <div class="shim-row">
         <div class="shim-text">
           <strong>WSL</strong>
           <small>Copies dvc-shim into your WSL distro (~/.local/share/dvc/) and adds a 'claude' alias to ~/.bashrc. Also enables WSL session discovery. Reversible.</small>
         </div>
-        <button :disabled="shimBusy !== ''" @click="shimAction('wsl', 'install')">Install</button>
-        <button :disabled="shimBusy !== ''" @click="shimAction('wsl', 'remove')">Remove</button>
+        <button class="field-btn" :disabled="shimBusy !== ''" @click="shimAction('wsl', 'install')">Install</button>
+        <button class="field-btn" :disabled="shimBusy !== ''" @click="shimAction('wsl', 'remove')">Remove</button>
       </div>
-      <p v-if="shimMsg.wsl" class="shim-msg">{{ shimMsg.wsl }}</p>
-    </div>
+      <p v-if="shimMsg.wsl" class="hint">{{ shimMsg.wsl }}</p>
+    </label>
 ```
 
-Add matching scoped styles (`.shim-row { display: flex; gap: 8px; align-items: center; }` etc. — follow the file's existing token usage). The Settings window is 420×460; if the new section overflows, bump the `inner_size` height in `lib.rs`'s settings-window builder to 620.
+Add scoped styles for the new bits only (`.shim-row { display: flex; gap: 8px; align-items: center; } .shim-text { flex: 1; display: flex; flex-direction: column; }` — follow the file's existing token usage). The Settings window is 420×460; if the new section overflows, bump the `inner_size` height in `lib.rs`'s settings-window builder to 620.
 
 - [ ] **Step 4: Build + typecheck + manual smoke**
 
@@ -1192,6 +1298,17 @@ Append (match the file's existing list format):
 - M4 deferred: no opportunistic cleanup of stale native `run\*.json` (crashed
   shims) — stale entries surface in the list and fall to Tier 2 on send, same
   as stale WSL entries today; add a connect-probe sweep if the noise bothers.
+- M4 known: Windows can't unlink a still-bound AF_UNIX socket file, so a clean
+  shim exit leaves its `.sock` behind (the `.json` registry entry IS removed;
+  the pre-bind remove_file handles staleness on next start). Restructure the
+  accept loop for drop-before-cleanup if the litter ever matters.
+- M4 known: with ExecutionPolicy Restricted/AllSigned the PowerShell profile
+  never runs and the 'claude' wrapper is inert — install surfaces a warning
+  (deployer::exec_policy_warning) but cannot fix it for the user.
+- M4 risk: an npm-installed native Claude Code is `claude.cmd`, which the
+  shim's bare-name CreateProcess spawn may not resolve; verified against the
+  native installer's claude.exe only. If it bites, resolve the full path in
+  the profile function via `(Get-Command claude -CommandType Application).Source`.
 ```
 
 - [ ] **Step 3: Update CLAUDE.md invariants**
@@ -1229,7 +1346,7 @@ git commit -m "docs: spec §15.6 native Tier 1 amendment; M4 deferred-scope note
 No code. Run through on this machine (has both WSL and native-capable PowerShell):
 
 - [ ] `pnpm tauri dev` → Settings shows both consent rows; tray has no shim items.
-- [ ] Install native shim → new PowerShell window → `claude` starts via shim → session appears in composer as `(Windows · C:/...)`.
+- [ ] Install native shim → new PowerShell window → `claude` starts via shim → session appears in composer as `(Windows · C:/...)`. Specifically confirm the shim can spawn `claude` at all on this machine (npm installs are `claude.cmd`, which bare-name CreateProcess may not resolve — if it fails, apply the `Get-Command` fallback recorded in improvements.md and report).
 - [ ] Capture → send to the native session → text lands + Enter, ack notification.
 - [ ] Type in the session while sending → "busy" → Tier 2 clipboard fallback with `C:/` paths.
 - [ ] WSL row install → WSL session appears alongside; send still works; both hosts in one dropdown, focused-project ranking picks the right one.
@@ -1238,6 +1355,10 @@ No code. Run through on this machine (has both WSL and native-capable PowerShell
 Report results; John merges on his verify.
 
 ---
+
+## Post-review revisions (2026-08-25 adversarial plan review)
+
+Applied: `wsl_connected` protected from partial frontend saves via `settings::merge_frontend` (Task 6); Task 7 call-site bridge fixed to `Host::Wsl { distro: s.distro.clone() }` (TargetSession rewrite stays in Task 8); Windows `.sock`-removal e2e assertion cfg-relaxed with rationale (Task 4); ExecutionPolicy warning on native install (Tasks 10–11); `--bins` not `--lib --bins` (Task 3); testable `distros_from` guard (Task 6); degraded-send notification copy (Task 8); Settings markup aligned to `field-label`/`hint` (Task 11); error-string and improvements.md accuracy fixes. Accepted as documentation-only: `wsl_connected` default-false migration (reinstall flips it; native-default is the intended direction); `claude.cmd` spawn risk moved to a Task 14 checkpoint + recorded fallback.
 
 ## Self-review notes
 
