@@ -14,7 +14,9 @@ pub struct Shared {
     pub last_input: Arc<Mutex<Instant>>,
 }
 
+#[cfg(unix)]
 struct RawGuard(Option<nix::sys::termios::Termios>);
+#[cfg(unix)]
 impl RawGuard {
     fn new() -> Self {
         use nix::sys::termios::*;
@@ -30,11 +32,60 @@ impl RawGuard {
         }
     }
 }
+#[cfg(unix)]
 impl Drop for RawGuard {
     fn drop(&mut self) {
         if let Some(orig) = &self.0 {
             use nix::sys::termios::*;
             tcsetattr(&std::io::stdin(), SetArg::TCSANOW, orig).ok();
+        }
+    }
+}
+
+#[cfg(windows)]
+struct RawGuard {
+    stdin_orig: Option<u32>,
+    stdout_orig: Option<u32>,
+}
+
+#[cfg(windows)]
+impl RawGuard {
+    fn new() -> Self {
+        use windows_sys::Win32::System::Console::*;
+        unsafe fn set(handle_id: u32, f: impl Fn(u32) -> u32) -> Option<u32> {
+            use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+            unsafe {
+                let h = GetStdHandle(handle_id);
+                if h == INVALID_HANDLE_VALUE || h.is_null() { return None; }
+                let mut mode = 0u32;
+                if GetConsoleMode(h, &mut mode) == 0 { return None; } // not a console (tests, pipes)
+                if SetConsoleMode(h, f(mode)) == 0 { return None; }
+                Some(mode)
+            }
+        }
+        unsafe {
+            RawGuard {
+                // raw stdin: no line buffering/echo/ctrl-c cooking; VT input sequences on
+                stdin_orig: set(STD_INPUT_HANDLE, |m| {
+                    (m & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT))
+                        | ENABLE_VIRTUAL_TERMINAL_INPUT
+                }),
+                // VT output so the child's escape sequences render
+                stdout_orig: set(STD_OUTPUT_HANDLE, |m| {
+                    m | ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_PROCESSED_OUTPUT
+                }),
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for RawGuard {
+    fn drop(&mut self) {
+        use windows_sys::Win32::System::Console::*;
+        unsafe {
+            if let Some(m) = self.stdin_orig { SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), m); }
+            if let Some(m) = self.stdout_orig { SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), m); }
         }
     }
 }
