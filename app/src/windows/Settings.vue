@@ -265,7 +265,7 @@ async function save() {
       </div>
     </label>
     <p v-if="probeMsg.clipboard" class="hint">{{ probeMsg.clipboard }}</p>
-    <label class="field-label">
+    <div class="field-label">
       Instant delivery (Tier 1)
       <div class="shim-row">
         <div class="shim-text">
@@ -285,7 +285,7 @@ async function save() {
         <button class="field-btn" :disabled="shimBusy !== ''" @click="shimAction('wsl', 'remove')">Remove</button>
       </div>
       <p v-if="shimMsg.wsl" class="hint">{{ shimMsg.wsl }}</p>
-    </label>
+    </div>
     <button
       v-if="hotkeyRegion !== defaults.region || hotkeyWindow !== defaults.window || hotkeyClipboard !== defaults.clipboard"
       class="link-btn"

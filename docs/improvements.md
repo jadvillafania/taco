@@ -59,3 +59,14 @@ Deferred work, in rough priority order. Each lands as its own small branch when 
   shim's bare-name CreateProcess spawn may not resolve; verified against the
   native installer's claude.exe only. If it bites, resolve the full path in
   the profile function via `(Get-Command claude -CommandType Application).Source`.
+- `remove_native_shim` reports "removed" even when the exe was locked by a
+  live shim session (`std::fs::remove_file(...).ok()` swallows the error) —
+  surface the leftover like install's mirror copy does instead of ignoring it.
+- `native_bin_dir` falls back to `.` when LOCALAPPDATA is unset while
+  `native_run_dir` returns `None` for the same case — the two helpers
+  disagree on an unreachable-on-Windows case.
+- `wsl_scan_is_gated` asserts wall-clock <200ms — right tell, could flake on
+  a loaded machine; a spawn-counting seam would be sturdier.
+- `profile_paths` guesses `$USERPROFILE\Documents` — could instead ask
+  powershell for `$PROFILE.CurrentUserAllHosts` (deployer already shells
+  powershell for Get-ExecutionPolicy).

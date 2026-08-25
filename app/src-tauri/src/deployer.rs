@@ -31,7 +31,7 @@ pub fn default_distro() -> Result<String, String> {
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| e.to_string())?;
-    crate::sessions::parse_wsl_list(&out.stdout)
+    crate::sessions::distros_from(&out)
         .into_iter()
         .next()
         .ok_or_else(|| "no WSL distribution found".into())
@@ -176,9 +176,9 @@ pub async fn install_wsl_shim(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn remove_wsl_shim(app: tauri::AppHandle) -> Result<(), String> {
-    let d = default_distro()?;
-    remove(&d)?;
-    set_wsl_connected(&app, false)
+    let result = default_distro().and_then(|d| remove(&d));
+    set_wsl_connected(&app, false)?;
+    result
 }
 
 #[tauri::command]

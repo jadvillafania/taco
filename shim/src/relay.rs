@@ -101,13 +101,29 @@ const CPR: &[u8] = b"\x1b[1;1R";
 /// True when our stdin is a real console -- i.e. a terminal is on the other side of
 /// our stdout and will answer ConPTY's cursor-position query itself. Answering on top
 /// of it would leave a stray `ESC[1;1R` in the child's input, so we only answer when
-/// this is false.
+/// that isn't the case (see the combined check at the call site).
 #[cfg(windows)]
 fn stdin_is_console() -> bool {
     use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
     use windows_sys::Win32::System::Console::{GetConsoleMode, GetStdHandle, STD_INPUT_HANDLE};
     unsafe {
         let h = GetStdHandle(STD_INPUT_HANDLE);
+        if h == INVALID_HANDLE_VALUE || h.is_null() { return false; }
+        let mut mode = 0u32;
+        GetConsoleMode(h, &mut mode) != 0
+    }
+}
+
+/// True when our stdout is a real console. A terminal only answers ConPTY's
+/// cursor-position query on our behalf when it owns *both* ends -- stdin as a
+/// console with stdout redirected (`claude > log.txt`, `claude | tee`) still
+/// leaves the query unanswered, so this is checked alongside `stdin_is_console`.
+#[cfg(windows)]
+fn stdout_is_console() -> bool {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Console::{GetConsoleMode, GetStdHandle, STD_OUTPUT_HANDLE};
+    unsafe {
+        let h = GetStdHandle(STD_OUTPUT_HANDLE);
         if h == INVALID_HANDLE_VALUE || h.is_null() { return false; }
         let mut mode = 0u32;
         GetConsoleMode(h, &mut mode) != 0
@@ -191,11 +207,13 @@ pub fn run(args: &[String]) -> i32 {
         // ConPTY is created with PSUEDOCONSOLE_INHERIT_CURSOR (portable-pty's choice),
         // so it opens by asking the *terminal* where the cursor is (DSR, `ESC[6n`) and
         // will not run the child's console session until it gets a CPR answer back on
-        // the pty's input. A real terminal on our stdout answers on our behalf; a pipe
-        // (tests, programmatic drivers) never does, and the child then hangs before it
-        // has run a single instruction. Answer it ourselves in exactly that case.
+        // the pty's input. A real terminal answers on our behalf only when it owns
+        // both our stdin and our stdout; if either end is redirected (a pipe, a file,
+        // `claude > log.txt`, `claude | tee`, tests/programmatic drivers) nothing
+        // answers and the child hangs before it has run a single instruction. Answer
+        // it ourselves whenever that full console pairing doesn't hold.
         #[cfg(windows)]
-        let dsr_writer = if stdin_is_console() { None } else { Some(shared.writer.clone()) };
+        let dsr_writer = if stdin_is_console() && stdout_is_console() { None } else { Some(shared.writer.clone()) };
         std::thread::spawn(move || {
             let mut out = std::io::stdout();
             let mut buf = [0u8; 8192];
