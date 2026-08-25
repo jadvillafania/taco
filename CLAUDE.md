@@ -46,6 +46,10 @@ powershell.exe -Command "cd C:\Users\jvillafania\dev\claude_companion\app; pnpm 
   WSL** with `cargo build --release --target x86_64-unknown-linux-musl`.
   After changing `shim/`, rebuild and re-copy the bundled resource:
   `cargo build --release --target x86_64-unknown-linux-musl && cp target/x86_64-unknown-linux-musl/release/dvc-shim ../app/src-tauri/resources/dvc-shim`
+- The shim also builds **on Windows** (Tier 1 for native sessions):
+  `powershell.exe -Command "cd C:\Users\jvillafania\dev\claude_companion\shim; cargo build --release"`,
+  then copy `shim\target\release\dvc-shim.exe` to `app\src-tauri\resources\dvc-shim.exe`.
+  After changing `shim/`, rebuild BOTH resources.
 - `tauri dev` opens real windows on the Windows desktop — UI behavior
   (tray, global hotkey, capture overlay) can only be verified there, not
   in WSL.
