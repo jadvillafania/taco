@@ -63,7 +63,23 @@ pub fn native_run_dir() -> Option<std::path::PathBuf> {
         .map(|l| std::path::PathBuf::from(l).join("DeveloperVisualCompanion").join("run"))
 }
 
-pub fn list_sessions() -> Vec<Session> {
+pub fn list_sessions(wsl_connected: bool) -> Vec<Session> {
+    let mut sessions: Vec<Session> = native_run_dir()
+        .map(|d| sessions_in_flat_dir(&d))
+        .unwrap_or_default();
+    if wsl_connected {
+        sessions.extend(wsl_sessions());
+    }
+    sessions
+}
+
+/// Guard first: a failed wsl.exe prints error text, not a distro list (bug fix).
+pub fn distros_from(out: &std::process::Output) -> Vec<String> {
+    if !out.status.success() { return Vec::new(); }
+    parse_wsl_list(&out.stdout)
+}
+
+fn wsl_sessions() -> Vec<Session> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let Ok(out) = std::process::Command::new("wsl.exe")
@@ -72,7 +88,7 @@ pub fn list_sessions() -> Vec<Session> {
         .output()
     else { return Vec::new() };
     let mut sessions = Vec::new();
-    for distro in parse_wsl_list(&out.stdout) {
+    for distro in distros_from(&out) {
         // stale registry files (crashed shims) surface here; Tier 1 send fails -> Tier 2 fallback
         let base = std::path::PathBuf::from(format!(r"\\wsl$\{distro}\run\user"));
         sessions.extend(sessions_under(&base, &distro));
@@ -133,9 +149,10 @@ pub fn foreground_rect() -> Option<(i32, i32, i32, i32)> {
 }
 
 #[tauri::command]
-pub fn list_sessions_cmd(state: tauri::State<crate::capture::CaptureState>) -> Vec<Session> {
+pub fn list_sessions_cmd(app: tauri::AppHandle, state: tauri::State<crate::capture::CaptureState>) -> Vec<Session> {
+    let wsl = crate::settings::load(&crate::retention::data_dir(&app)).wsl_connected;
     let title = state.0.lock().unwrap().focus_title.clone();
-    rank_sessions(list_sessions(), title.as_deref())
+    rank_sessions(list_sessions(wsl), title.as_deref())
 }
 
 #[cfg(test)]
@@ -225,5 +242,28 @@ mod tests {
         assert_eq!(s[0].host, Host::Wsl { distro: "Ubuntu".into() });
         assert_eq!(s[0].project, "my-app");
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn wsl_error_output_yields_no_distros() {
+        use std::os::windows::process::ExitStatusExt;
+        let utf16 = |s: &str| s.encode_utf16().flat_map(|u| u.to_le_bytes()).collect::<Vec<u8>>();
+        let fail = std::process::Output {
+            status: std::process::ExitStatus::from_raw(1),
+            stdout: utf16("There is no distribution with the supplied name."),
+            stderr: Vec::new(),
+        };
+        assert!(distros_from(&fail).is_empty(), "error text is not a distro list");
+        let ok = std::process::Output { status: std::process::ExitStatus::from_raw(0), stdout: utf16("Ubuntu\r\n"), stderr: Vec::new() };
+        assert_eq!(distros_from(&ok), vec!["Ubuntu"]);
+    }
+
+    #[test]
+    fn wsl_scan_is_gated() {
+        // gate off: must return instantly with no wsl.exe spawn — timing is the tell
+        let t0 = std::time::Instant::now();
+        let _ = list_sessions(false);
+        assert!(t0.elapsed() < std::time::Duration::from_millis(200),
+            "gated list_sessions must not touch wsl.exe / UNC paths");
     }
 }

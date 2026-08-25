@@ -8,6 +8,7 @@ pub struct Settings {
     pub hotkey_region: String,
     pub hotkey_window: String,
     pub hotkey_clipboard: String,
+    pub wsl_connected: bool,
 }
 
 impl Default for Settings {
@@ -18,6 +19,7 @@ impl Default for Settings {
             hotkey_region: "Ctrl+Shift+Space".into(),
             hotkey_window: "Ctrl+Alt+Space".into(),
             hotkey_clipboard: "Ctrl+Alt+V".into(),
+            wsl_connected: false,
         }
     }
 }
@@ -46,9 +48,18 @@ pub fn get_default_settings() -> Settings {
     Settings::default()
 }
 
+/// The frontend's Save posts only the fields it edits; deployer-owned state
+/// (wsl_connected) must survive by re-reading it from disk.
+pub fn merge_frontend(dir: &Path, mut incoming: Settings) -> Settings {
+    incoming.wsl_connected = load(dir).wsl_connected;
+    incoming
+}
+
 #[tauri::command]
 pub fn set_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String> {
-    save(&crate::retention::data_dir(&app), &settings).map_err(|e| e.to_string())?;
+    let dir = crate::retention::data_dir(&app);
+    let settings = merge_frontend(&dir, settings);
+    save(&dir, &settings).map_err(|e| e.to_string())?;
     crate::hotkeys::apply(&app, &settings);
     Ok(())
 }
@@ -83,6 +94,23 @@ mod tests {
         // zero retention_hours is clamped to a floor of 1
         std::fs::write(dir.join("settings.json"), r#"{"retention_hours":0}"#).unwrap();
         assert_eq!(load(&dir).retention_hours, 1);
+
+        // wsl_connected defaults to false and persists
+        assert!(!load(&dir).wsl_connected);
+        save(&dir, &Settings { wsl_connected: true, ..Default::default() }).unwrap();
+        assert!(load(&dir).wsl_connected);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn frontend_save_cannot_clobber_wsl_connected() {
+        let dir = std::env::temp_dir().join(format!("dvc-merge-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        save(&dir, &Settings { wsl_connected: true, ..Default::default() }).unwrap();
+        // incoming from the frontend: wsl_connected serde-defaulted to false
+        let merged = merge_frontend(&dir, Settings { retention_hours: 72, ..Default::default() });
+        assert!(merged.wsl_connected, "deployer-owned flag survives a frontend save");
+        assert_eq!(merged.retention_hours, 72);
         std::fs::remove_dir_all(&dir).ok();
     }
 }
