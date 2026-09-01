@@ -70,3 +70,7 @@ Deferred work, in rough priority order. Each lands as its own small branch when 
 - `profile_paths` guesses `$USERPROFILE\Documents` — could instead ask
   powershell for `$PROFILE.CurrentUserAllHosts` (deployer already shells
   powershell for Get-ExecutionPolicy).
+- Tray "Capture Screen" (full-screen) still shoots the monitor under the cursor,
+  which from the tray is always the primary. Region capture got per-monitor
+  overlays; full-screen from the tray could get a monitor picker submenu if
+  anyone asks.
