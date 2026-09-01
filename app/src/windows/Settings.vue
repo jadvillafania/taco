@@ -313,8 +313,10 @@ input[readonly] { cursor: pointer; background: var(--raised); font-family: var(-
 .field-btn:hover { color: var(--accent); }
 .link-btn { background: transparent; border: none; color: var(--muted); font: 500 12px var(--font-sans); cursor: pointer; padding: 0; text-align: left; }
 .link-btn:hover { color: var(--accent); }
-.shim-row { display: flex; gap: 8px; align-items: center; }
-.shim-text { flex: 1; display: flex; flex-direction: column; }
+/* Description takes the full width; the buttons wrap onto their own row beneath it,
+   so the long explanatory text isn't squeezed into a narrow column. */
+.shim-row { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin-bottom: 10px; }
+.shim-text { flex: 1 1 100%; display: flex; flex-direction: column; }
 .shim-text small { color: var(--muted); font-size: 11px; }
 /* .field-btn is absolutely positioned for the hotkey-wrap context; reset that
    here so it renders as a normal inline button inside the flex shim-row. */
