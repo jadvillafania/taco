@@ -138,6 +138,7 @@ onMounted(async () => {
   loaded.value = snapshot();
   const d = await invoke<{ hotkey_region: string; hotkey_window: string; hotkey_clipboard: string }>("get_default_settings");
   defaults.value = { region: d.hotkey_region, window: d.hotkey_window, clipboard: d.hotkey_clipboard };
+  await refreshShimStatus();
   try {
     const w = getCurrentWindow();
     await w.show();
@@ -150,6 +151,13 @@ onMounted(async () => {
 type ShimHost = "native" | "wsl";
 const shimBusy = ref<ShimHost | "">("");
 const shimMsg = ref<Partial<Record<ShimHost, string>>>({});
+const shimOn = ref<Record<ShimHost, boolean>>({ native: false, wsl: false });
+
+async function refreshShimStatus() {
+  try {
+    shimOn.value = await invoke<Record<ShimHost, boolean>>("shim_status");
+  } catch { /* leave the buttons enabled rather than lock the user out */ }
+}
 
 async function shimAction(host: ShimHost, action: "install" | "remove") {
   shimBusy.value = host;
@@ -166,6 +174,7 @@ async function shimAction(host: ShimHost, action: "install" | "remove") {
     shimMsg.value = { ...shimMsg.value, [host]: String(e) };
   } finally {
     shimBusy.value = "";
+    await refreshShimStatus();
   }
 }
 
@@ -265,14 +274,14 @@ async function save() {
       </div>
     </label>
     <p v-if="probeMsg.clipboard" class="hint">{{ probeMsg.clipboard }}</p>
-    <div class="field-label">
+    <div class="shim-group">
       <div class="shim-row">
         <div class="shim-text">
           <strong>Windows (native)</strong>
           <small>Install for Windows PowerShell. Reversible; cmd.exe keeps using clipboard delivery.</small>
         </div>
-        <button class="field-btn" :disabled="shimBusy !== ''" @click="shimAction('native', 'install')">Install</button>
-        <button class="field-btn" :disabled="shimBusy !== ''" @click="shimAction('native', 'remove')">Remove</button>
+        <button class="btn btn-quiet" :disabled="shimBusy !== '' || shimOn.native" @click="shimAction('native', 'install')">Install</button>
+        <button class="btn btn-quiet" :disabled="shimBusy !== '' || !shimOn.native" @click="shimAction('native', 'remove')">Remove</button>
       </div>
       <p v-if="shimMsg.native" class="hint">{{ shimMsg.native }}</p>
       <div class="shim-row">
@@ -280,8 +289,8 @@ async function save() {
           <strong>WSL</strong>
           <small>Install for your WSL distro. Reversible; also enables WSL session discovery.</small>
         </div>
-        <button class="field-btn" :disabled="shimBusy !== ''" @click="shimAction('wsl', 'install')">Install</button>
-        <button class="field-btn" :disabled="shimBusy !== ''" @click="shimAction('wsl', 'remove')">Remove</button>
+        <button class="btn btn-quiet" :disabled="shimBusy !== '' || shimOn.wsl" @click="shimAction('wsl', 'install')">Install</button>
+        <button class="btn btn-quiet" :disabled="shimBusy !== '' || !shimOn.wsl" @click="shimAction('wsl', 'remove')">Remove</button>
       </div>
       <p v-if="shimMsg.wsl" class="hint">{{ shimMsg.wsl }}</p>
     </div>
@@ -315,9 +324,12 @@ input[readonly] { cursor: pointer; background: var(--raised); font-family: var(-
 /* Description takes the full width; the buttons wrap onto their own row beneath it,
    so the long explanatory text isn't squeezed into a narrow column. */
 .shim-row { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin-bottom: 10px; }
-.shim-text { flex: 1 1 100%; display: flex; flex-direction: column; }
-.shim-text small { color: var(--muted); font-size: 11px; }
-/* .field-btn is absolutely positioned for the hotkey-wrap context; reset that
-   here so it renders as a normal inline button inside the flex shim-row. */
-.shim-row .field-btn { position: static; transform: none; }
+.shim-text { flex: 1 1 100%; display: flex; flex-direction: column; gap: 1px; }
+/* Title in normal text colour, description dimmer — the old .field-label wrapper
+   painted both the same muted tone (and uppercased them), so nothing read as subtle. */
+.shim-text strong { color: var(--text); font-size: 12.5px; font-weight: 600; }
+.shim-text small { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.shim-row .btn { padding: 5px 12px; font-size: 12px; }
+.shim-row .btn:disabled { opacity: .45; cursor: default; }
+.shim-row .btn:disabled:hover { border-color: var(--line); }
 </style>

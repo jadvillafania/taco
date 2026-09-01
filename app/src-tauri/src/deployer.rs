@@ -167,6 +167,23 @@ fn set_wsl_connected(app: &tauri::AppHandle, on: bool) -> Result<(), String> {
     crate::settings::save(&dir, &s).map_err(|e| e.to_string())
 }
 
+#[derive(serde::Serialize)]
+pub struct ShimStatus {
+    pub native: bool,
+    pub wsl: bool,
+}
+
+/// Which shims are installed, for enabling the right button. Both checks are local:
+/// the native exe is a file stat, and the WSL side reads the flag install/remove already
+/// maintain — probing the distro would mean a wsl.exe spawn on every settings open.
+#[tauri::command]
+pub fn shim_status(app: tauri::AppHandle) -> ShimStatus {
+    ShimStatus {
+        native: native_shim_exe().exists(),
+        wsl: crate::settings::load(&crate::retention::data_dir(&app)).wsl_connected,
+    }
+}
+
 #[tauri::command]
 pub async fn install_wsl_shim(app: tauri::AppHandle) -> Result<(), String> {
     let d = default_distro()?;

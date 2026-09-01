@@ -67,7 +67,8 @@ pub fn run() {
             deployer::install_wsl_shim,
             deployer::remove_wsl_shim,
             deployer::install_native_shim,
-            deployer::remove_native_shim
+            deployer::remove_native_shim,
+            deployer::shim_status
         ])
         .manage(capture::CaptureState(Default::default()))
         .manage(commands::ComposerGeom::default())
