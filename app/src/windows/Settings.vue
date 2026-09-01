@@ -269,7 +269,7 @@ async function save() {
       <div class="shim-row">
         <div class="shim-text">
           <strong>Windows (native)</strong>
-          <small>Copies dvc-shim.exe into %LOCALAPPDATA% and adds a 'claude' function to your PowerShell profile. Reversible. cmd.exe sessions keep using clipboard delivery.</small>
+          <small>Install for Windows PowerShell. Reversible; cmd.exe keeps using clipboard delivery.</small>
         </div>
         <button class="field-btn" :disabled="shimBusy !== ''" @click="shimAction('native', 'install')">Install</button>
         <button class="field-btn" :disabled="shimBusy !== ''" @click="shimAction('native', 'remove')">Remove</button>
@@ -278,7 +278,7 @@ async function save() {
       <div class="shim-row">
         <div class="shim-text">
           <strong>WSL</strong>
-          <small>Copies dvc-shim into your WSL distro (~/.local/share/dvc/) and adds a 'claude' alias to ~/.bashrc. Also enables WSL session discovery. Reversible.</small>
+          <small>Install for your WSL distro. Reversible; also enables WSL session discovery.</small>
         </div>
         <button class="field-btn" :disabled="shimBusy !== ''" @click="shimAction('wsl', 'install')">Install</button>
         <button class="field-btn" :disabled="shimBusy !== ''" @click="shimAction('wsl', 'remove')">Remove</button>
