@@ -25,14 +25,18 @@ impl Default for Settings {
 }
 
 pub fn load(dir: &Path) -> Settings {
-    let txt = std::fs::read_to_string(dir.join("settings.json")).ok();
-    let mut s: Settings = txt.as_deref()
-        .and_then(|t| serde_json::from_str(t).ok())
+    let parsed = std::fs::read_to_string(dir.join("settings.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    let mut s: Settings = parsed
+        .as_ref()
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
-    // Migration: a settings file that predates the wsl_connected gate belongs to a
-    // WSL-first install — don't silently disconnect it on upgrade.
-    if let Some(t) = &txt {
-        if !t.contains("wsl_connected") {
+    // Migration: a settings file that parses but predates the wsl_connected gate belongs
+    // to a WSL-first install — don't silently disconnect it on upgrade. A corrupt file
+    // must stay fail-safe (gate off), so this keys off the parsed object, not raw text.
+    if let Some(v) = &parsed {
+        if v.get("wsl_connected").is_none() {
             s.wsl_connected = true;
         }
     }
@@ -121,6 +125,10 @@ mod tests {
         // explicit false (post-gate remove-shim) is respected
         std::fs::write(dir.join("settings.json"), r#"{"wsl_connected":false}"#).unwrap();
         assert!(!load(&dir).wsl_connected);
+        // a half-written file (save() is non-atomic, wsl_connected serializes last)
+        // must stay fail-safe rather than migrate itself to connected
+        std::fs::write(dir.join("settings.json"), r#"{"retention_hours":24,"hotkey_re"#).unwrap();
+        assert!(!load(&dir).wsl_connected, "corrupt file does not fail open");
         std::fs::remove_dir_all(&dir).ok();
         // fresh install: no file at all -> gate stays off
         assert!(!load(&dir).wsl_connected);

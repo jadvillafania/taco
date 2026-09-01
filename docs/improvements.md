@@ -74,3 +74,8 @@ Deferred work, in rough priority order. Each lands as its own small branch when 
   which from the tray is always the primary. Region capture got per-monitor
   overlays; full-screen from the tray could get a monitor picker submenu if
   anyone asks.
+- Dead session registry files are filtered at list time but never unlinked, so
+  killed-shim `<pid>.json` files accumulate in `/run/user/<uid>/dvc/`. A safe
+  deleter could unlink Windows-host files whose OpenProcess fails, but WSL ones
+  need an age gate — a stopped distro makes every `\\wsl$\...\proc\<pid>` stat
+  miss, so a blanket unlink would wipe a live install's whole registry.

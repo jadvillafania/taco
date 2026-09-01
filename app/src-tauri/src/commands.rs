@@ -26,7 +26,11 @@ fn overlay_windows(app: &AppHandle) -> Vec<tauri::WebviewWindow> {
 }
 
 /// Close every overlay window and drop all frozen frames (files included).
-fn close_overlays(app: &AppHandle) {
+///
+/// Also the supersede path: a new capture must not leave a stale overlay from an earlier
+/// one alive. The composer and its accumulated captures are untouched — every capture
+/// source appends to the same list (see `push_capture`).
+pub(crate) fn close_overlays(app: &AppHandle) {
     for w in overlay_windows(app) {
         w.close().ok();
     }
@@ -37,13 +41,6 @@ fn close_overlays(app: &AppHandle) {
     }
 }
 
-/// A new capture (region or full-screen) supersedes any overlays already in flight: close them
-/// and drop whatever frozen frames they were holding, so a stale overlay never outlives the
-/// capture it belonged to. The composer and its accumulated captures are untouched — every
-/// capture source appends to the same list (see `push_capture`).
-pub fn supersede_pending_overlay(app: &AppHandle) {
-    close_overlays(app);
-}
 
 /// Append a capture to the pending list and notify the frontend.
 pub(crate) fn push_capture(app: &AppHandle, path: std::path::PathBuf) {
@@ -103,14 +100,15 @@ pub fn start_region_capture(app: &AppHandle) {
     let app = app.clone();
     let work = move || {
         let _flight = flight;
-        supersede_pending_overlay(&app);
-        let frozens = match capture::freeze_all_monitors(&app) {
+        close_overlays(&app);
+        let (frozens, skipped) = match capture::freeze_all_monitors(&app) {
             Ok(f) => f,
             Err(e) => {
                 reshow_composer(&app);
                 return notify(&app, "Capture failed", &e);
             }
         };
+        let mut unusable = skipped;
         // Focus the overlay under the cursor so Escape lands where the user is looking.
         let cursor = app.cursor_position().ok();
         let mut focus_win: Option<tauri::WebviewWindow> = None;
@@ -131,6 +129,7 @@ pub fn start_region_capture(app: &AppHandle) {
                     if let Some(f) = app.state::<CaptureState>().0.lock().unwrap().frozen.remove(&label) {
                         std::fs::remove_file(f.frame_png).ok();
                     }
+                    unusable += 1;
                     continue;
                 }
             };
@@ -146,7 +145,14 @@ pub fn start_region_capture(app: &AppHandle) {
             }
         }
         match focus_win {
-            Some(w) => { w.set_focus().ok(); }
+            Some(w) => {
+                w.set_focus().ok();
+                // Partial failure is otherwise invisible: that monitor just looks unresponsive.
+                if unusable > 0 {
+                    notify(&app, "Capture partly unavailable",
+                        &format!("{unusable} monitor(s) could not be frozen — select on a dimmed screen"));
+                }
+            }
             None => {
                 reshow_composer(&app);
                 notify(&app, "Capture failed", "could not open overlay window");
@@ -177,10 +183,13 @@ pub fn get_frame(window: tauri::WebviewWindow, state: State<CaptureState>) -> Re
 
 #[tauri::command]
 pub async fn region_selected(app: AppHandle, state: State<'_, CaptureState>, window: tauri::WebviewWindow, x: u32, y: u32, w: u32, h: u32) -> Result<(), String> {
-    let frozen = state.0.lock().unwrap().frozen.remove(window.label()).ok_or("no frozen frame")?;
+    // Close first: a drag must always end the capture, even if this overlay's frame is
+    // already gone — otherwise the window survives as an undismissable always-on-top pane.
+    let frozen = state.0.lock().unwrap().frozen.remove(window.label());
+    close_overlays(&app); // a selection on one monitor ends the capture on all of them
+    let frozen = frozen.ok_or("no frozen frame")?;
     let result = capture::save_crop(&app, &frozen.image, x, y, w, h);
     std::fs::remove_file(&frozen.frame_png).ok();
-    close_overlays(&app); // a selection on one monitor ends the capture on all of them
     match result {
         Ok(path) => {
             push_capture(&app, path);
@@ -420,7 +429,7 @@ pub fn start_screen_capture(app: &AppHandle) {
     let app = app.clone();
     let work = move || {
         let _flight = flight;
-        supersede_pending_overlay(&app);
+        close_overlays(&app);
         match capture::save_full(&app) {
             Ok(path) => {
                 push_capture(&app, path);
@@ -449,7 +458,7 @@ pub fn start_window_capture(app: &AppHandle) {
     let app = app.clone();
     let work = move || {
         let _flight = flight;
-        supersede_pending_overlay(&app);
+        close_overlays(&app);
         match capture::save_active_window(&app) {
             Ok(path) => {
                 push_capture(&app, path);
@@ -473,7 +482,7 @@ pub fn start_window_capture(app: &AppHandle) {
 
 pub fn start_clipboard_capture(app: &AppHandle) {
     sample_focus_title(app);
-    supersede_pending_overlay(app);
+    close_overlays(app);
     match capture::save_clipboard_image(app) {
         Ok(path) => {
             push_capture(app, path);
