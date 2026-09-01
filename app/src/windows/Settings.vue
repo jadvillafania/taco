@@ -266,7 +266,6 @@ async function save() {
     </label>
     <p v-if="probeMsg.clipboard" class="hint">{{ probeMsg.clipboard }}</p>
     <div class="field-label">
-      Instant delivery (Tier 1)
       <div class="shim-row">
         <div class="shim-text">
           <strong>Windows (native)</strong>
@@ -305,7 +304,7 @@ label { display: flex; flex-direction: column; gap: 5px; }
 .settings input, .settings textarea { text-transform: none; letter-spacing: normal; }
 input[readonly] { cursor: pointer; background: var(--raised); font-family: var(--font-mono); font-size: 12px; }
 .recording { outline: 2px solid var(--accent); background: var(--raised); }
-.hint { font-size: 12px; color: var(--accent); margin: 0; }
+.hint { font-size: 12px; color: var(--muted); margin: 0; }
 .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
 .hotkey-wrap { position: relative; }
 .hotkey-wrap input { width: 100%; padding-right: 30px; box-sizing: border-box; }
