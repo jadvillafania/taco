@@ -14,6 +14,8 @@ pub struct Session {
     pub host: Host,
     pub project: String,
     pub cwd: String,
+    #[serde(skip)]
+    pub pid: u32,
 }
 
 pub fn parse_wsl_list(bytes: &[u8]) -> Vec<String> {
@@ -34,7 +36,33 @@ fn session_from_file(p: &Path, host: Host) -> Option<Session> {
         host,
         project: v["project"].as_str().unwrap_or("?").to_string(),
         cwd: v["cwd"].as_str().unwrap_or("").to_string(),
+        pid: v["pid"].as_u64().unwrap_or(0) as u32,
     })
+}
+
+fn windows_pid_alive(pid: u32) -> bool {
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    unsafe {
+        match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            Ok(h) => {
+                windows::Win32::Foundation::CloseHandle(h).ok();
+                true
+            }
+            Err(_) => false,
+        }
+    }
+}
+
+/// A killed shim (closed terminal, SIGKILL) can't remove its registry file, so the
+/// dropdown would show the dead session forever — check liveness at list time.
+fn is_alive(s: &Session) -> bool {
+    if s.pid == 0 {
+        return true; // ponytail: unknown pid — better a stale row than hiding a live session
+    }
+    match &s.host {
+        Host::Wsl { distro } => Path::new(&format!(r"\\wsl$\{distro}\proc\{}", s.pid)).exists(),
+        Host::Windows => windows_pid_alive(s.pid),
+    }
 }
 
 pub fn sessions_under(base: &Path, distro: &str) -> Vec<Session> {
@@ -70,6 +98,7 @@ pub fn list_sessions(wsl_connected: bool) -> Vec<Session> {
     if wsl_connected {
         sessions.extend(wsl_sessions());
     }
+    sessions.retain(is_alive);
     sessions
 }
 
@@ -174,7 +203,14 @@ mod tests {
             host: Host::Wsl { distro: "Ubuntu".into() },
             project: project.into(),
             cwd: format!("/home/j/{project}"),
+            pid: 1,
         }
+    }
+
+    #[test]
+    fn detects_live_and_dead_windows_pids() {
+        assert!(windows_pid_alive(std::process::id()), "our own pid is alive");
+        assert!(!windows_pid_alive(3), "pids are multiples of 4 — 3 can never exist");
     }
 
     #[test]

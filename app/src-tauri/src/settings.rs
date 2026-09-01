@@ -25,10 +25,17 @@ impl Default for Settings {
 }
 
 pub fn load(dir: &Path) -> Settings {
-    let mut s: Settings = std::fs::read_to_string(dir.join("settings.json"))
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
+    let txt = std::fs::read_to_string(dir.join("settings.json")).ok();
+    let mut s: Settings = txt.as_deref()
+        .and_then(|t| serde_json::from_str(t).ok())
         .unwrap_or_default();
+    // Migration: a settings file that predates the wsl_connected gate belongs to a
+    // WSL-first install — don't silently disconnect it on upgrade.
+    if let Some(t) = &txt {
+        if !t.contains("wsl_connected") {
+            s.wsl_connected = true;
+        }
+    }
     s.retention_hours = s.retention_hours.max(1);
     s
 }
@@ -95,11 +102,28 @@ mod tests {
         std::fs::write(dir.join("settings.json"), r#"{"retention_hours":0}"#).unwrap();
         assert_eq!(load(&dir).retention_hours, 1);
 
-        // wsl_connected defaults to false and persists
+        // wsl_connected persists both ways once written (a key-less file migrates to true,
+        // covered by pre_gate_settings_migrate_to_wsl_connected)
+        save(&dir, &Settings { wsl_connected: false, ..Default::default() }).unwrap();
         assert!(!load(&dir).wsl_connected);
         save(&dir, &Settings { wsl_connected: true, ..Default::default() }).unwrap();
         assert!(load(&dir).wsl_connected);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn pre_gate_settings_migrate_to_wsl_connected() {
+        let dir = std::env::temp_dir().join(format!("dvc-mig-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // v0.1.1-era file: predates the gate, that install was WSL-first
+        std::fs::write(dir.join("settings.json"), r#"{"retention_hours":24}"#).unwrap();
+        assert!(load(&dir).wsl_connected, "existing install stays connected after upgrade");
+        // explicit false (post-gate remove-shim) is respected
+        std::fs::write(dir.join("settings.json"), r#"{"wsl_connected":false}"#).unwrap();
+        assert!(!load(&dir).wsl_connected);
+        std::fs::remove_dir_all(&dir).ok();
+        // fresh install: no file at all -> gate stays off
+        assert!(!load(&dir).wsl_connected);
     }
 
     #[test]
