@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for all app windows",
-  "windows": ["main", "overlay*", "composer", "settings", "history", "about"],
+  "windows": ["main", "overlay*", "composer", "settings", "history", "about", "welcome"],
   "permissions": [
     "core:default",
     "core:window:allow-show",
