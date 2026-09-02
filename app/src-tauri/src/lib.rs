@@ -18,6 +18,23 @@ mod settings;
 mod tier1;
 mod winpos;
 
+/// Opened on first run and from the tray — the app has no persistent window, so
+/// without this an install ends with nothing on screen but a tray icon.
+fn open_welcome(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("welcome") {
+        w.show().ok();
+        w.set_focus().ok();
+    } else {
+        tauri::WebviewWindowBuilder::new(app, "welcome", tauri::WebviewUrl::App("index.html?window=welcome".into()))
+            .title("Welcome to Taco")
+            .inner_size(500.0, 620.0)
+            .min_inner_size(420.0, 420.0)
+            .visible(false)
+            .build()
+            .ok();
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
@@ -73,10 +90,17 @@ pub fn run() {
         .manage(capture::CaptureState(Default::default()))
         .manage(commands::ComposerGeom::default())
         .setup(|app| {
-            let s = crate::settings::load(&crate::retention::data_dir(app.handle()));
+            let dir = crate::retention::data_dir(app.handle());
+            // No settings file yet == first launch after install. Writing the defaults now
+            // is what marks the install as onboarded (a failed write just re-shows it).
+            let first_run = !dir.join("settings.json").exists();
+            let s = crate::settings::load(&dir);
+            if first_run {
+                let _ = crate::settings::save(&dir, &s);
+            }
 
             let retention_hours = s.retention_hours;
-            let captures = crate::retention::data_dir(app.handle()).join("captures");
+            let captures = dir.join("captures");
             std::thread::spawn(move || {
                 let _ = crate::retention::sweep(
                     &captures,
@@ -97,6 +121,7 @@ pub fn run() {
             let auto_on = app.autolaunch().is_enabled().unwrap_or(false);
             let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, auto_on, None::<&str>)?;
             let autostart_handle = autostart.clone();
+            let welcome = MenuItem::with_id(app, "welcome", "Getting Started…", true, None::<&str>)?;
             let about = MenuItem::with_id(app, "about", "About Taco", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Exit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[
@@ -106,7 +131,7 @@ pub fn run() {
                 &PredefinedMenuItem::separator(app)?,
                 &autostart,
                 &PredefinedMenuItem::separator(app)?,
-                &about, &quit,
+                &welcome, &about, &quit,
             ])?;
 
             app.manage(crate::hotkeys::TrayLabels {
@@ -156,6 +181,7 @@ pub fn run() {
                                 .ok();
                         }
                     }
+                    "welcome" => open_welcome(app),
                     "about" => {
                         if let Some(w) = app.get_webview_window("about") {
                             w.show().ok();
@@ -191,6 +217,10 @@ pub fn run() {
                 .build(app)?;
 
             crate::hotkeys::apply(app.handle(), &s);
+
+            if first_run {
+                open_welcome(app.handle());
+            }
 
             Ok(())
         })

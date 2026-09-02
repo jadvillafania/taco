@@ -4,6 +4,7 @@ import Composer from "./windows/Composer.vue";
 import History from "./windows/History.vue";
 import Settings from "./windows/Settings.vue";
 import About from "./windows/About.vue";
+import Welcome from "./windows/Welcome.vue";
 const win = new URLSearchParams(location.search).get("window");
 </script>
 
@@ -13,6 +14,7 @@ const win = new URLSearchParams(location.search).get("window");
   <History v-else-if="win === 'history'" />
   <Settings v-else-if="win === 'settings'" />
   <About v-else-if="win === 'about'" />
+  <Welcome v-else-if="win === 'welcome'" />
 </template>
 
 <style>

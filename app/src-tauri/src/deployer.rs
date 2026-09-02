@@ -15,7 +15,14 @@ fn wsl_sh(distro: &str, script: &str, stdin_bytes: Option<&[u8]>) -> Result<Stri
         .spawn()
         .map_err(|e| e.to_string())?;
     if let (Some(bytes), Some(mut sin)) = (stdin_bytes, child.stdin.take()) {
-        sin.write_all(bytes).map_err(|e| e.to_string())?;
+        // A script may legitimately never read stdin — the alias-block install
+        // short-circuits its `cat` when grep finds the marker — which closes the pipe
+        // under us (os error 109). Not a failure: the exit status below is the verdict.
+        if let Err(e) = sin.write_all(bytes) {
+            if e.kind() != std::io::ErrorKind::BrokenPipe {
+                return Err(e.to_string());
+            }
+        }
     }
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
     if out.status.success() {
@@ -44,8 +51,11 @@ pub fn install(app: &tauri::AppHandle, distro: &str) -> Result<(), String> {
         .resolve("resources/dvc-shim", tauri::path::BaseDirectory::Resource)
         .map_err(|e| e.to_string())?;
     let bytes = std::fs::read(&bin).map_err(|e| format!("shim binary missing ({e}) — build shim/ first"))?;
+    // Write-then-rename: truncating the shim in place fails with ETXTBSY while a
+    // wrapped `claude` session is running it. rename(2) over a busy binary is fine —
+    // the live process keeps the old inode and picks up the new one on next launch.
     wsl_sh(distro,
-        r#"mkdir -p "$HOME/.local/share/dvc" && cat > "$HOME/.local/share/dvc/dvc-shim" && chmod +x "$HOME/.local/share/dvc/dvc-shim""#,
+        r#"d="$HOME/.local/share/dvc" && mkdir -p "$d" && cat > "$d/dvc-shim.new" && chmod +x "$d/dvc-shim.new" && mv -f "$d/dvc-shim.new" "$d/dvc-shim""#,
         Some(&bytes))?;
     // alias block is streamed via stdin: it contains single quotes, so it must
     // never be embedded inside a single-quoted shell string
@@ -173,14 +183,40 @@ pub struct ShimStatus {
     pub wsl: bool,
 }
 
-/// Which shims are installed, for enabling the right button. Both checks are local:
-/// the native exe is a file stat, and the WSL side reads the flag install/remove already
-/// maintain — probing the distro would mean a wsl.exe spawn on every settings open.
+/// Is the WSL shim really there? The `wsl_connected` flag is Windows-side state and
+/// can go stale (wiped settings, shim installed by another install of the app), so
+/// probe the distro when it's already running — `-l --running` never boots one, and a
+/// boot just to grey a button would be worse than a stale answer. A probe that finds
+/// the shim heals the flag, otherwise the send gate would stay off with the Install
+/// button greyed out and no way back.
+fn wsl_installed(app: &tauri::AppHandle) -> bool {
+    let flag = crate::settings::load(&crate::retention::data_dir(app)).wsl_connected;
+    let Ok(d) = default_distro() else { return flag };
+    let up = std::process::Command::new("wsl.exe")
+        .args(["-l", "-q", "--running"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map(|o| crate::sessions::distros_from(&o).contains(&d))
+        .unwrap_or(false);
+    if !up {
+        return flag;
+    }
+    let installed = wsl_sh(&d, &format!(
+        r#"test -x "$HOME/.local/share/dvc/dvc-shim" && grep -qF '{MARK_BEGIN}' "$HOME/.bashrc""#
+    ), None).is_ok();
+    if installed && !flag {
+        let _ = set_wsl_connected(app, true);
+    }
+    installed
+}
+
+/// Which shims are installed, for enabling the right button. The native exe is a
+/// plain file stat; WSL needs the probe above.
 #[tauri::command]
 pub fn shim_status(app: tauri::AppHandle) -> ShimStatus {
     ShimStatus {
         native: native_shim_exe().exists(),
-        wsl: crate::settings::load(&crate::retention::data_dir(&app)).wsl_connected,
+        wsl: wsl_installed(&app),
     }
 }
 
