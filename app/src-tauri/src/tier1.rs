@@ -18,12 +18,23 @@ pub fn parse_response(stdout: &str, success: bool) -> Outcome {
 
 /// ponytail: no explicit timeout here — shim's own 10s socket timeout bounds it;
 /// add a watchdog if wsl.exe startup hangs ever become a real complaint.
-pub fn send_via_shim(distro: &str, sid: &str, payload: &str) -> Outcome {
+pub fn send_via_shim(host: &crate::sessions::Host, sid: &str, payload: &str) -> Outcome {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let script = format!(r#""$HOME/.local/share/dvc/dvc-shim" send --session {sid}"#);
-    let child = std::process::Command::new("wsl.exe")
-        .args(["-d", distro, "--", "sh", "-lc", &script])
+    let mut cmd = match host {
+        crate::sessions::Host::Wsl { distro } => {
+            let script = format!(r#""$HOME/.local/share/dvc/dvc-shim" send --session {sid}"#);
+            let mut c = std::process::Command::new("wsl.exe");
+            c.args(["-d", distro, "--", "sh", "-lc", &script]);
+            c
+        }
+        crate::sessions::Host::Windows => {
+            let mut c = std::process::Command::new(crate::deployer::native_shim_exe());
+            c.args(["send", "--session", sid]);
+            c
+        }
+    };
+    let child = cmd
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -31,7 +42,7 @@ pub fn send_via_shim(distro: &str, sid: &str, payload: &str) -> Outcome {
         .spawn();
     let mut child = match child {
         Ok(c) => c,
-        Err(e) => return Outcome::Rejected(format!("wsl.exe failed: {e}")),
+        Err(e) => return Outcome::Rejected(format!("shim spawn failed: {e}")),
     };
     if let Some(mut stdin) = child.stdin.take() {
         if stdin.write_all(payload.as_bytes()).is_err() {
@@ -60,5 +71,14 @@ mod tests {
             _ => panic!("expected rejection"),
         }
         assert!(matches!(parse_response("", false), Outcome::Rejected(_)));
+    }
+
+    #[test]
+    fn windows_host_send_with_missing_exe_is_rejected_not_panic() {
+        // no shim installed at %LOCALAPPDATA%...\bin during unit tests
+        match send_via_shim(&crate::sessions::Host::Windows, "1", "x") {
+            Outcome::Rejected(r) => assert!(!r.is_empty()),
+            Outcome::Ack => panic!("cannot ack without a shim"),
+        }
     }
 }

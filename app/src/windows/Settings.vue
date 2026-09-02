@@ -138,6 +138,7 @@ onMounted(async () => {
   loaded.value = snapshot();
   const d = await invoke<{ hotkey_region: string; hotkey_window: string; hotkey_clipboard: string }>("get_default_settings");
   defaults.value = { region: d.hotkey_region, window: d.hotkey_window, clipboard: d.hotkey_clipboard };
+  await refreshShimStatus();
   try {
     const w = getCurrentWindow();
     await w.show();
@@ -146,6 +147,36 @@ onMounted(async () => {
     /* tray re-click force-shows */
   }
 });
+
+type ShimHost = "native" | "wsl";
+const shimBusy = ref<ShimHost | "">("");
+const shimMsg = ref<Partial<Record<ShimHost, string>>>({});
+const shimOn = ref<Record<ShimHost, boolean>>({ native: false, wsl: false });
+
+async function refreshShimStatus() {
+  try {
+    shimOn.value = await invoke<Record<ShimHost, boolean>>("shim_status");
+  } catch { /* leave the buttons enabled rather than lock the user out */ }
+}
+
+async function shimAction(host: ShimHost, action: "install" | "remove") {
+  shimBusy.value = host;
+  shimMsg.value = { ...shimMsg.value, [host]: "" };
+  const cmd = `${action}_${host === "wsl" ? "wsl" : "native"}_shim`;
+  try {
+    // ()-returning commands yield null; install_native_shim may yield a warning
+    const warn = await invoke<string | null>(cmd);
+    const base = action === "install"
+      ? "Installed — restart your terminal, then run 'claude' as usual."
+      : "Removed — profile wrapper deleted.";
+    shimMsg.value = { ...shimMsg.value, [host]: warn ? `${base} ⚠ ${warn}` : base };
+  } catch (e) {
+    shimMsg.value = { ...shimMsg.value, [host]: String(e) };
+  } finally {
+    shimBusy.value = "";
+    await refreshShimStatus();
+  }
+}
 
 async function save() {
   error.value = "";
@@ -243,6 +274,26 @@ async function save() {
       </div>
     </label>
     <p v-if="probeMsg.clipboard" class="hint">{{ probeMsg.clipboard }}</p>
+    <div class="shim-group">
+      <div class="shim-row">
+        <div class="shim-text">
+          <strong>Windows (native)</strong>
+          <small>Install for Windows PowerShell. Reversible; cmd.exe keeps using clipboard delivery.</small>
+        </div>
+        <button class="btn btn-quiet" :disabled="shimBusy !== '' || shimOn.native" @click="shimAction('native', 'install')">Install</button>
+        <button class="btn btn-quiet" :disabled="shimBusy !== '' || !shimOn.native" @click="shimAction('native', 'remove')">Remove</button>
+      </div>
+      <p v-if="shimMsg.native" class="hint">{{ shimMsg.native }}</p>
+      <div class="shim-row">
+        <div class="shim-text">
+          <strong>WSL</strong>
+          <small>Install for your WSL distro. Reversible; also enables WSL session discovery.</small>
+        </div>
+        <button class="btn btn-quiet" :disabled="shimBusy !== '' || shimOn.wsl" @click="shimAction('wsl', 'install')">Install</button>
+        <button class="btn btn-quiet" :disabled="shimBusy !== '' || !shimOn.wsl" @click="shimAction('wsl', 'remove')">Remove</button>
+      </div>
+      <p v-if="shimMsg.wsl" class="hint">{{ shimMsg.wsl }}</p>
+    </div>
     <button
       v-if="hotkeyRegion !== defaults.region || hotkeyWindow !== defaults.window || hotkeyClipboard !== defaults.clipboard"
       class="link-btn"
@@ -262,7 +313,7 @@ label { display: flex; flex-direction: column; gap: 5px; }
 .settings input, .settings textarea { text-transform: none; letter-spacing: normal; }
 input[readonly] { cursor: pointer; background: var(--raised); font-family: var(--font-mono); font-size: 12px; }
 .recording { outline: 2px solid var(--accent); background: var(--raised); }
-.hint { font-size: 12px; color: var(--accent); margin: 0; }
+.hint { font-size: 12px; color: var(--muted); margin: 0; }
 .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
 .hotkey-wrap { position: relative; }
 .hotkey-wrap input { width: 100%; padding-right: 30px; box-sizing: border-box; }
@@ -270,4 +321,15 @@ input[readonly] { cursor: pointer; background: var(--raised); font-family: var(-
 .field-btn:hover { color: var(--accent); }
 .link-btn { background: transparent; border: none; color: var(--muted); font: 500 12px var(--font-sans); cursor: pointer; padding: 0; text-align: left; }
 .link-btn:hover { color: var(--accent); }
+/* Description takes the full width; the buttons wrap onto their own row beneath it,
+   so the long explanatory text isn't squeezed into a narrow column. */
+.shim-row { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin-bottom: 10px; }
+.shim-text { flex: 1 1 100%; display: flex; flex-direction: column; gap: 1px; }
+/* Title in normal text colour, description dimmer — the old .field-label wrapper
+   painted both the same muted tone (and uppercased them), so nothing read as subtle. */
+.shim-text strong { color: var(--text); font-size: 12.5px; font-weight: 600; }
+.shim-text small { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.shim-row .btn { padding: 5px 12px; font-size: 12px; }
+.shim-row .btn:disabled { opacity: .45; cursor: default; }
+.shim-row .btn:disabled:hover { border-color: var(--line); }
 </style>

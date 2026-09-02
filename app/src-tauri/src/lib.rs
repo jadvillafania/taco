@@ -63,7 +63,12 @@ pub fn run() {
             settings::get_settings,
             settings::set_settings,
             settings::get_default_settings,
-            hotkeys::probe_hotkey
+            hotkeys::probe_hotkey,
+            deployer::install_wsl_shim,
+            deployer::remove_wsl_shim,
+            deployer::install_native_shim,
+            deployer::remove_native_shim,
+            deployer::shim_status
         ])
         .manage(capture::CaptureState(Default::default()))
         .manage(commands::ComposerGeom::default())
@@ -89,8 +94,6 @@ pub fn run() {
             let open_comp = MenuItem::with_id(app, "open_composer", "Open Composer…", true, None::<&str>)?;
             let history = MenuItem::with_id(app, "history", "Capture History…", true, None::<&str>)?;
             let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
-            let install_shim = MenuItem::with_id(app, "install_shim", "Install WSL Shim…", true, None::<&str>)?;
-            let remove_shim = MenuItem::with_id(app, "remove_shim", "Remove WSL Shim", true, None::<&str>)?;
             let auto_on = app.autolaunch().is_enabled().unwrap_or(false);
             let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, auto_on, None::<&str>)?;
             let autostart_handle = autostart.clone();
@@ -101,7 +104,7 @@ pub fn run() {
                 &PredefinedMenuItem::separator(app)?,
                 &history, &settings,
                 &PredefinedMenuItem::separator(app)?,
-                &install_shim, &remove_shim, &autostart,
+                &autostart,
                 &PredefinedMenuItem::separator(app)?,
                 &about, &quit,
             ])?;
@@ -147,7 +150,7 @@ pub fn run() {
                         } else {
                             tauri::WebviewWindowBuilder::new(app, "settings", tauri::WebviewUrl::App("index.html?window=settings".into()))
                                 .title("Taco: Settings")
-                                .inner_size(420.0, 460.0)
+                                .inner_size(420.0, 620.0)
                                 .visible(false)
                                 .build()
                                 .ok();
@@ -168,34 +171,6 @@ pub fn run() {
                                 .build()
                                 .ok();
                         }
-                    }
-                    "install_shim" => {
-                        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
-                        let app = app.clone();
-                        std::thread::spawn(move || {
-                            let ok = app.dialog().message(
-                                "This copies dvc-shim into your WSL distribution (~/.local/share/dvc/) and adds a 'claude' alias to ~/.bashrc so sessions support instant delivery.\n\nBoth changes are reversible via 'Remove WSL Shim'.")
-                                .title("Install WSL shim?")
-                                .buttons(MessageDialogButtons::OkCancelCustom("Install".into(), "Cancel".into()))
-                                .blocking_show();
-                            if !ok { return; }
-                            let result = crate::deployer::default_distro()
-                                .and_then(|d| crate::deployer::install(&app, &d));
-                            match result {
-                                Ok(()) => crate::commands::notify(&app, "Shim installed", "Restart your terminal, then run 'claude' as usual."),
-                                Err(e) => crate::commands::notify(&app, "Shim install failed", &e),
-                            }
-                        });
-                    }
-                    "remove_shim" => {
-                        let app = app.clone();
-                        std::thread::spawn(move || {
-                            let result = crate::deployer::default_distro().and_then(|d| crate::deployer::remove(&d));
-                            match result {
-                                Ok(()) => crate::commands::notify(&app, "Shim removed", "Alias and binary deleted."),
-                                Err(e) => crate::commands::notify(&app, "Shim removal failed", &e),
-                            }
-                        });
                     }
                     "autostart" => {
                         let al = app.autolaunch();

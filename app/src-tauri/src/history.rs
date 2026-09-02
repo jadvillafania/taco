@@ -69,7 +69,7 @@ pub async fn resend_capture(app: tauri::AppHandle, path: String) -> Result<(), S
     if !is_under(&captures_root(&app), &p) {
         return Err("not a capture file".into());
     }
-    crate::commands::supersede_pending_overlay(&app);
+    crate::commands::close_overlays(&app);
     {
         let state = app.state::<crate::capture::CaptureState>();
         state.0.lock().unwrap().focus_title = None;

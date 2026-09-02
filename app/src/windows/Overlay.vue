@@ -7,10 +7,16 @@ const drag = ref<{ x: number; y: number } | null>(null);
 const rect = ref<{ x: number; y: number; w: number; h: number } | null>(null);
 
 onMounted(async () => {
-  frameSrc.value = convertFileSrc(await invoke<string>("get_frame"));
+  // Listen before awaiting the frame: if get_frame rejects, this overlay is still a
+  // fullscreen always-on-top window and Escape has to remain able to dismiss it.
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") invoke("cancel_overlay");
   });
+  try {
+    frameSrc.value = convertFileSrc(await invoke<string>("get_frame"));
+  } catch {
+    invoke("cancel_overlay");
+  }
 });
 
 function down(e: MouseEvent) {

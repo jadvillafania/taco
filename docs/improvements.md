@@ -37,3 +37,45 @@ Deferred work, in rough priority order. Each lands as its own small branch when 
 - ~~`Settings` struct lacks `Debug` derive~~ — fixed: `Debug` added to the derive list.
 - clear_captures pending-composer ordering — already resolved: history.rs closes the composer
   window and clears CaptureState.captures before remove_dir_all.
+- M4 deferred: cmd.exe has no profile mechanism — native Tier 1 covers
+  PowerShell only; a tray "New Claude Code session" launcher would cover cmd
+  users (rejected for now: only Taco-started sessions would be injectable).
+- M4 upgrade note: `wsl_connected` defaults to false — existing WSL-shim users
+  must reinstall the WSL shim (or the flag flips on their next install) before
+  WSL sessions reappear in the composer.
+- deployer assumes `$USERPROFILE\Documents` — redirected Documents folders
+  break profile edits (ponytail comment in deployer.rs).
+- M4 deferred: no opportunistic cleanup of stale native `run\*.json` (crashed
+  shims) — stale entries surface in the list and fall to Tier 2 on send, same
+  as stale WSL entries today; add a connect-probe sweep if the noise bothers.
+- M4 known: Windows can't unlink a still-bound AF_UNIX socket file, so a clean
+  shim exit leaves its `.sock` behind (the `.json` registry entry IS removed;
+  the pre-bind remove_file handles staleness on next start). Restructure the
+  accept loop for drop-before-cleanup if the litter ever matters.
+- M4 known: with ExecutionPolicy Restricted/AllSigned the PowerShell profile
+  never runs and the 'claude' wrapper is inert — install surfaces a warning
+  (deployer::exec_policy_warning) but cannot fix it for the user.
+- M4 risk: an npm-installed native Claude Code is `claude.cmd`, which the
+  shim's bare-name CreateProcess spawn may not resolve; verified against the
+  native installer's claude.exe only. If it bites, resolve the full path in
+  the profile function via `(Get-Command claude -CommandType Application).Source`.
+- `remove_native_shim` reports "removed" even when the exe was locked by a
+  live shim session (`std::fs::remove_file(...).ok()` swallows the error) —
+  surface the leftover like install's mirror copy does instead of ignoring it.
+- `native_bin_dir` falls back to `.` when LOCALAPPDATA is unset while
+  `native_run_dir` returns `None` for the same case — the two helpers
+  disagree on an unreachable-on-Windows case.
+- `wsl_scan_is_gated` asserts wall-clock <200ms — right tell, could flake on
+  a loaded machine; a spawn-counting seam would be sturdier.
+- `profile_paths` guesses `$USERPROFILE\Documents` — could instead ask
+  powershell for `$PROFILE.CurrentUserAllHosts` (deployer already shells
+  powershell for Get-ExecutionPolicy).
+- Tray "Capture Screen" (full-screen) still shoots the monitor under the cursor,
+  which from the tray is always the primary. Region capture got per-monitor
+  overlays; full-screen from the tray could get a monitor picker submenu if
+  anyone asks.
+- Dead session registry files are filtered at list time but never unlinked, so
+  killed-shim `<pid>.json` files accumulate in `/run/user/<uid>/dvc/`. A safe
+  deleter could unlink Windows-host files whose OpenProcess fails, but WSL ones
+  need an age gate — a stopped distro makes every `\\wsl$\...\proc\<pid>` stat
+  miss, so a blanket unlink would wipe a live install's whole registry.

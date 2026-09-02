@@ -14,7 +14,8 @@ pub struct Frozen {
 
 #[derive(Default)]
 pub struct Inner {
-    pub frozen: Option<Frozen>,
+    /// Frozen frame per overlay window, keyed by window label ("overlay0", "overlay1", …).
+    pub frozen: std::collections::HashMap<String, Frozen>,
     pub captures: Vec<PathBuf>,
     pub focus_title: Option<String>,
 }
@@ -39,14 +40,44 @@ fn capture_path(app: &AppHandle) -> PathBuf {
     dir.join(format!("capture-{}.png", now.format("%H%M%S-%3f")))
 }
 
-pub fn freeze_monitor_under_cursor(app: &AppHandle) -> Result<Frozen, String> {
-    let m = monitor_under_cursor(app)?;
-    let (image, mon_x, mon_y) = capture_monitor(&m)?;
+/// Freeze every monitor for region selection — one overlay per monitor, so a capture
+/// triggered from the tray (cursor pinned to the primary taskbar) can still reach any screen.
+/// Returns the frozen frames plus how many monitors were skipped.
+///
+/// The PNG encode — the expensive half, deflate over a whole screen — runs one thread per
+/// monitor, so hotkey→overlay latency tracks the slowest monitor rather than the sum of all
+/// of them (spec §23 budget). The captures themselves stay serial: xcap's monitor handles
+/// are not Sync.
+pub fn freeze_all_monitors(app: &AppHandle) -> Result<(Vec<Frozen>, usize), String> {
+    let monitors = xcap::Monitor::all().map_err(|e| e.to_string())?;
     let dir = crate::retention::data_dir(app).join("frames");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let frame_png = dir.join("frame.png");
-    image.save(&frame_png).map_err(|e| e.to_string())?;
-    Ok(Frozen { mon_w: image.width(), mon_h: image.height(), image, frame_png, mon_x, mon_y })
+    let total = monitors.len();
+    // ponytail: a monitor that fails to capture is skipped, not fatal — the rest still overlay
+    let shots: Vec<(usize, RgbaImage, i32, i32)> = monitors
+        .iter()
+        .enumerate()
+        .filter_map(|(i, m)| capture_monitor(m).ok().map(|(img, x, y)| (i, img, x, y)))
+        .collect();
+    let frozen: Vec<Frozen> = std::thread::scope(|s| {
+        let handles: Vec<_> = shots
+            .into_iter()
+            .map(|(i, image, mon_x, mon_y)| {
+                let dir = &dir;
+                s.spawn(move || {
+                    let frame_png = dir.join(format!("frame-{i}.png"));
+                    image.save(&frame_png).ok()?;
+                    Some(Frozen { mon_w: image.width(), mon_h: image.height(), image, frame_png, mon_x, mon_y })
+                })
+            })
+            .collect();
+        handles.into_iter().filter_map(|h| h.join().unwrap_or(None)).collect()
+    });
+    if frozen.is_empty() {
+        return Err("no monitor could be captured".into());
+    }
+    let skipped = total - frozen.len();
+    Ok((frozen, skipped))
 }
 
 pub fn save_crop(app: &AppHandle, img: &RgbaImage, x: u32, y: u32, w: u32, h: u32) -> Result<PathBuf, String> {

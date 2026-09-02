@@ -15,10 +15,23 @@ pub fn runtime_dir() -> PathBuf {
     if let Ok(d) = std::env::var("DVC_RUNTIME_DIR") {
         return PathBuf::from(d);
     }
-    if let Ok(x) = std::env::var("XDG_RUNTIME_DIR") {
-        return PathBuf::from(x).join("dvc");
+    #[cfg(unix)]
+    {
+        if let Ok(x) = std::env::var("XDG_RUNTIME_DIR") {
+            return PathBuf::from(x).join("dvc");
+        }
+        std::env::temp_dir().join(format!("dvc-{}", nix::unistd::getuid()))
     }
-    std::env::temp_dir().join(format!("dvc-{}", nix::unistd::getuid()))
+    #[cfg(windows)]
+    {
+        // ponytail: AF_UNIX sun_path caps at ~108 bytes; this is ~75 for normal
+        // usernames — a very long username breaks bind (shim exits before spawning
+        // claude). Shorten to %LOCALAPPDATA%\dvc\run if anyone ever hits it.
+        match std::env::var("LOCALAPPDATA") {
+            Ok(l) => PathBuf::from(l).join("DeveloperVisualCompanion").join("run"),
+            Err(_) => std::env::temp_dir().join("dvc"),
+        }
+    }
 }
 
 pub fn write(dir: &Path, info: &SessionInfo) -> std::io::Result<PathBuf> {
@@ -57,10 +70,22 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    // Merged (was two #[test] fns): both mutated the shared DVC_RUNTIME_DIR env var and
+    // raced under the default parallel test runner. One test = one thread of execution,
+    // so the mutation order is deterministic. Coverage is unchanged: override honored on
+    // both platforms; Windows LOCALAPPDATA fallback exercised when the override is absent.
     #[test]
-    fn runtime_dir_honors_override() {
+    fn runtime_dir_honors_override_and_windows_fallback() {
         unsafe { std::env::set_var("DVC_RUNTIME_DIR", "/tmp/dvc-test-x") };
         assert_eq!(runtime_dir(), std::path::PathBuf::from("/tmp/dvc-test-x"));
+
         unsafe { std::env::remove_var("DVC_RUNTIME_DIR") };
+        #[cfg(windows)]
+        {
+            let d = runtime_dir();
+            let want = std::path::PathBuf::from(std::env::var("LOCALAPPDATA").unwrap())
+                .join("DeveloperVisualCompanion").join("run");
+            assert_eq!(d, want);
+        }
     }
 }

@@ -1,6 +1,6 @@
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
-use std::os::unix::net::UnixListener;
+use crate::sockets::UnixListener;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -14,7 +14,9 @@ pub struct Shared {
     pub last_input: Arc<Mutex<Instant>>,
 }
 
+#[cfg(unix)]
 struct RawGuard(Option<nix::sys::termios::Termios>);
+#[cfg(unix)]
 impl RawGuard {
     fn new() -> Self {
         use nix::sys::termios::*;
@@ -30,12 +32,118 @@ impl RawGuard {
         }
     }
 }
+#[cfg(unix)]
 impl Drop for RawGuard {
     fn drop(&mut self) {
         if let Some(orig) = &self.0 {
             use nix::sys::termios::*;
             tcsetattr(&std::io::stdin(), SetArg::TCSANOW, orig).ok();
         }
+    }
+}
+
+#[cfg(windows)]
+struct RawGuard {
+    stdin_orig: Option<u32>,
+    stdout_orig: Option<u32>,
+}
+
+#[cfg(windows)]
+impl RawGuard {
+    fn new() -> Self {
+        use windows_sys::Win32::System::Console::*;
+        unsafe fn set(handle_id: u32, f: impl Fn(u32) -> u32) -> Option<u32> {
+            use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+            unsafe {
+                let h = GetStdHandle(handle_id);
+                if h == INVALID_HANDLE_VALUE || h.is_null() { return None; }
+                let mut mode = 0u32;
+                if GetConsoleMode(h, &mut mode) == 0 { return None; } // not a console (tests, pipes)
+                if SetConsoleMode(h, f(mode)) == 0 { return None; }
+                Some(mode)
+            }
+        }
+        unsafe {
+            RawGuard {
+                // raw stdin: no line buffering/echo/ctrl-c cooking; VT input sequences on
+                stdin_orig: set(STD_INPUT_HANDLE, |m| {
+                    (m & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT))
+                        | ENABLE_VIRTUAL_TERMINAL_INPUT
+                }),
+                // VT output so the child's escape sequences render
+                stdout_orig: set(STD_OUTPUT_HANDLE, |m| {
+                    m | ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_PROCESSED_OUTPUT
+                }),
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for RawGuard {
+    fn drop(&mut self) {
+        use windows_sys::Win32::System::Console::*;
+        unsafe {
+            if let Some(m) = self.stdin_orig { SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), m); }
+            if let Some(m) = self.stdout_orig { SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), m); }
+        }
+    }
+}
+
+#[cfg(windows)]
+const DSR: &[u8] = b"\x1b[6n";
+// ponytail: we always answer "cursor is at 1;1" instead of tracking the real cursor.
+// Only used when stdout is a pipe -- there is no visible cursor to be wrong about, and
+// home is what a fresh terminal would report. A real emulator would parse the stream.
+#[cfg(windows)]
+const CPR: &[u8] = b"\x1b[1;1R";
+
+/// True when our stdin is a real console -- i.e. a terminal is on the other side of
+/// our stdout and will answer ConPTY's cursor-position query itself. Answering on top
+/// of it would leave a stray `ESC[1;1R` in the child's input, so we only answer when
+/// that isn't the case (see the combined check at the call site).
+#[cfg(windows)]
+fn stdin_is_console() -> bool {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Console::{GetConsoleMode, GetStdHandle, STD_INPUT_HANDLE};
+    unsafe {
+        let h = GetStdHandle(STD_INPUT_HANDLE);
+        if h == INVALID_HANDLE_VALUE || h.is_null() { return false; }
+        let mut mode = 0u32;
+        GetConsoleMode(h, &mut mode) != 0
+    }
+}
+
+/// True when our stdout is a real console. A terminal only answers ConPTY's
+/// cursor-position query on our behalf when it owns *both* ends -- stdin as a
+/// console with stdout redirected (`claude > log.txt`, `claude | tee`) still
+/// leaves the query unanswered, so this is checked alongside `stdin_is_console`.
+#[cfg(windows)]
+fn stdout_is_console() -> bool {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Console::{GetConsoleMode, GetStdHandle, STD_OUTPUT_HANDLE};
+    unsafe {
+        let h = GetStdHandle(STD_OUTPUT_HANDLE);
+        if h == INVALID_HANDLE_VALUE || h.is_null() { return false; }
+        let mut mode = 0u32;
+        GetConsoleMode(h, &mut mode) != 0
+    }
+}
+
+/// Reply CPR for each DSR in the pty's output. `carry` keeps the tail of the previous
+/// chunk so a query split across two reads is still matched; it is trimmed so a query
+/// can never be counted twice. Writes bypass the stdin relay on purpose: this is our
+/// reply, not the user typing, and must not disturb the injection idle gate.
+#[cfg(windows)]
+fn answer_dsr(carry: &mut Vec<u8>, chunk: &[u8], writer: &Arc<Mutex<Box<dyn Write + Send>>>) {
+    carry.extend_from_slice(chunk);
+    let hits = carry.windows(DSR.len()).filter(|w| *w == DSR).count();
+    let keep = carry.len().saturating_sub(DSR.len() - 1);
+    carry.drain(..keep);
+    for _ in 0..hits {
+        let mut w = writer.lock().unwrap();
+        if w.write_all(CPR).is_err() { return; }
+        w.flush().ok();
     }
 }
 
@@ -95,19 +203,35 @@ pub fn run(args: &[String]) -> i32 {
     };
 
     // pty -> stdout
-    std::thread::spawn(move || {
-        let mut out = std::io::stdout();
-        let mut buf = [0u8; 8192];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    if out.write_all(&buf[..n]).is_err() { break; }
-                    out.flush().ok();
+    {
+        // ConPTY is created with PSUEDOCONSOLE_INHERIT_CURSOR (portable-pty's choice),
+        // so it opens by asking the *terminal* where the cursor is (DSR, `ESC[6n`) and
+        // will not run the child's console session until it gets a CPR answer back on
+        // the pty's input. A real terminal answers on our behalf only when it owns
+        // both our stdin and our stdout; if either end is redirected (a pipe, a file,
+        // `claude > log.txt`, `claude | tee`, tests/programmatic drivers) nothing
+        // answers and the child hangs before it has run a single instruction. Answer
+        // it ourselves whenever that full console pairing doesn't hold.
+        #[cfg(windows)]
+        let dsr_writer = if stdin_is_console() && stdout_is_console() { None } else { Some(shared.writer.clone()) };
+        std::thread::spawn(move || {
+            let mut out = std::io::stdout();
+            let mut buf = [0u8; 8192];
+            #[cfg(windows)]
+            let mut carry: Vec<u8> = Vec::new();
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        #[cfg(windows)]
+                        if let Some(w) = &dsr_writer { answer_dsr(&mut carry, &buf[..n], w); }
+                        if out.write_all(&buf[..n]).is_err() { break; }
+                        out.flush().ok();
+                    }
                 }
             }
-        }
-    });
+        });
+    }
 
     // stdin -> pty (tracks last_input for the injection idle gate)
     {
@@ -130,16 +254,22 @@ pub fn run(args: &[String]) -> i32 {
         });
     }
 
-    // SIGWINCH -> pty resize
+    // terminal resize -> pty resize
+    // ponytail: 500ms size poll instead of SIGWINCH/console events — one code path
+    // for unix+windows; event-driven resize if the lag ever bothers anyone.
     {
         let master = master.clone();
-        if let Ok(mut signals) = signal_hook::iterator::Signals::new([signal_hook::consts::SIGWINCH]) {
-            std::thread::spawn(move || {
-                for _ in signals.forever() {
-                    master.lock().unwrap().resize(term_size()).ok();
+        std::thread::spawn(move || {
+            let mut prev = term_size();
+            loop {
+                std::thread::sleep(Duration::from_millis(500));
+                let now = term_size();
+                if now.rows != prev.rows || now.cols != prev.cols {
+                    master.lock().unwrap().resize(now).ok();
+                    prev = now;
                 }
-            });
-        }
+            }
+        });
     }
 
     crate::relay::spawn_socket_listener(listener, &shared); // Task 6 (no-op stub until then)
@@ -165,7 +295,7 @@ pub fn spawn_socket_listener(listener: UnixListener, shared: &Shared) {
 }
 
 fn handle_conn(
-    stream: std::os::unix::net::UnixStream,
+    stream: crate::sockets::UnixStream,
     writer: &Arc<Mutex<Box<dyn Write + Send>>>,
     last_input: &Arc<Mutex<Instant>>,
 ) {
