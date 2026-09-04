@@ -11,6 +11,13 @@ visual context into the agent conversation you already have open.
   <img src="docs/brand/taco-logo.png" width="200" alt="Taco logo">
 </p>
 
+## Install
+
+Grab the latest installer from
+[Releases](https://github.com/jadvillafania/taco/releases/latest) — `.exe`
+(NSIS) or `.msi`, both x64. First launch opens a Welcome window with the
+hotkeys and the shim install buttons; Taco then lives in the tray.
+
 ## How it works
 
 1. Press the global hotkey (default `Ctrl+Shift+Space`) → frozen-frame region
@@ -34,7 +41,7 @@ Delivery is tiered, evaluated per send:
   a notification asks you to paste. Universal fallback; a send never hard-fails
   while Tier 2 is possible.
 
-## Features (v0.1.2)
+## Features (v0.1.4)
 
 - Region / full-screen / active-window / clipboard-image capture
 - Multi-monitor region capture: every screen is frozen and overlaid, so a capture
@@ -44,6 +51,8 @@ Delivery is tiered, evaluated per send:
 - Configurable hotkeys with collision probing
 - Windows startup toggle, tray menu, About window
 - 24-hour capture retention, swept on startup
+- Welcome window on first launch (and from tray > Getting Started...) covering
+  the hotkeys, what Send does, and the shim installers
 
 ### Windows-native support
 
@@ -62,6 +71,10 @@ is a first-class target:
 - **Per-target path flavor.** The message carries `C:/...` for a native session
   and `/mnt/c/...` for a WSL one; a path that cannot be mapped degrades to Tier 2
   instead of failing the send.
+- **Distro picker.** The WSL shim installs into the distro WSL itself calls
+  default; Settings and Welcome can override that when you run several. Leaving
+  the picker on *WSL default* follows `wsl --set-default` rather than pinning a
+  name.
 - **WSL is opt-in.** Distro scanning and `\\wsl$` session discovery only run once
   the WSL shim is installed, so machines without WSL pay no cost for it.
 
