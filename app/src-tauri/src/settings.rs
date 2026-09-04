@@ -9,6 +9,9 @@ pub struct Settings {
     pub hotkey_window: String,
     pub hotkey_clipboard: String,
     pub wsl_connected: bool,
+    /// Empty means "whatever WSL calls default" — resolved at use time, so installing
+    /// a new distro or changing `wsl --set-default` doesn't leave a stale name behind.
+    pub wsl_distro: String,
 }
 
 impl Default for Settings {
@@ -20,6 +23,7 @@ impl Default for Settings {
             hotkey_window: "Ctrl+Alt+Space".into(),
             hotkey_clipboard: "Ctrl+Alt+V".into(),
             wsl_connected: false,
+            wsl_distro: String::new(),
         }
     }
 }

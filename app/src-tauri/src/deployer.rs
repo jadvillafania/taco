@@ -32,17 +32,60 @@ fn wsl_sh(distro: &str, script: &str, stdin_bytes: Option<&[u8]>) -> Result<Stri
     }
 }
 
-pub fn default_distro() -> Result<String, String> {
-    let out = std::process::Command::new("wsl.exe")
-        .args(["-l", "-q"])
+fn wsl_list(args: [&str; 2]) -> Result<std::process::Output, String> {
+    std::process::Command::new("wsl.exe")
+        .args(args)
         .creation_flags(CREATE_NO_WINDOW)
         .output()
-        .map_err(|e| e.to_string())?;
-    crate::sessions::distros_from(&out)
-        .into_iter()
-        .next()
-        .ok_or_else(|| "no WSL distribution found".into())
-    // ponytail: first distro only; per-distro picker when someone runs several
+        .map_err(|e| e.to_string())
+}
+
+/// Distros worth offering, real ones only.
+pub fn distros() -> Vec<String> {
+    wsl_list(["-l", "-q"]).map(|o| crate::sessions::distros_from(&o)).unwrap_or_default()
+}
+
+/// The one WSL itself considers default, falling back to the first listed.
+pub fn default_distro() -> Result<String, String> {
+    if let Some(d) = wsl_list(["-l", "-v"]).ok().and_then(|o| crate::sessions::default_from_verbose(&o.stdout)) {
+        return Ok(d);
+    }
+    distros().into_iter().next().ok_or_else(|| "no WSL distribution found".into())
+}
+
+/// Where the shim goes: the distro picked in Settings, else WSL's default. Resolving
+/// this must stay boot-free — the status probe calls it on every Settings open.
+pub fn target_distro(app: &tauri::AppHandle) -> Result<String, String> {
+    let pick = crate::settings::load(&crate::retention::data_dir(app)).wsl_distro;
+    if !pick.is_empty() {
+        return Ok(pick);
+    }
+    default_distro()
+}
+
+#[derive(serde::Serialize)]
+pub struct DistroList {
+    pub distros: Vec<String>,
+    pub default: String,
+}
+
+#[tauri::command]
+pub fn list_distros() -> DistroList {
+    DistroList { distros: distros(), default: default_distro().unwrap_or_default() }
+}
+
+/// Applied on its own rather than through `set_settings`: both the Welcome window and
+/// Settings offer this picker, and a window that echoes back a whole Settings struct it
+/// doesn't fully render would reset the fields it never loaded.
+#[tauri::command]
+pub fn set_wsl_distro(app: tauri::AppHandle, distro: String) -> Result<(), String> {
+    if !distro.is_empty() && !distros().contains(&distro) {
+        return Err(format!("{distro}: no such WSL distribution"));
+    }
+    let dir = crate::retention::data_dir(&app);
+    let mut s = crate::settings::load(&dir);
+    s.wsl_distro = distro;
+    crate::settings::save(&dir, &s).map_err(|e| e.to_string())
 }
 
 pub fn install(app: &tauri::AppHandle, distro: &str) -> Result<(), String> {
@@ -54,8 +97,11 @@ pub fn install(app: &tauri::AppHandle, distro: &str) -> Result<(), String> {
     // Write-then-rename: truncating the shim in place fails with ETXTBSY while a
     // wrapped `claude` session is running it. rename(2) over a busy binary is fine —
     // the live process keeps the old inode and picks up the new one on next launch.
+    // Paths are spelled out rather than held in a shell variable: a `d=...` assignment
+    // did not survive wsl.exe's argument handling on some hosts, leaving mkdir with an
+    // empty operand. Every command here must expand "$HOME" itself.
     wsl_sh(distro,
-        r#"d="$HOME/.local/share/dvc" && mkdir -p "$d" && cat > "$d/dvc-shim.new" && chmod +x "$d/dvc-shim.new" && mv -f "$d/dvc-shim.new" "$d/dvc-shim""#,
+        r#"mkdir -p "$HOME/.local/share/dvc" && cat > "$HOME/.local/share/dvc/dvc-shim.new" && chmod +x "$HOME/.local/share/dvc/dvc-shim.new" && mv -f "$HOME/.local/share/dvc/dvc-shim.new" "$HOME/.local/share/dvc/dvc-shim""#,
         Some(&bytes))?;
     // alias block is streamed via stdin: it contains single quotes, so it must
     // never be embedded inside a single-quoted shell string
@@ -191,7 +237,7 @@ pub struct ShimStatus {
 /// button greyed out and no way back.
 fn wsl_installed(app: &tauri::AppHandle) -> bool {
     let flag = crate::settings::load(&crate::retention::data_dir(app)).wsl_connected;
-    let Ok(d) = default_distro() else { return flag };
+    let Ok(d) = target_distro(app) else { return flag };
     let up = std::process::Command::new("wsl.exe")
         .args(["-l", "-q", "--running"])
         .creation_flags(CREATE_NO_WINDOW)
@@ -222,14 +268,16 @@ pub fn shim_status(app: tauri::AppHandle) -> ShimStatus {
 
 #[tauri::command]
 pub async fn install_wsl_shim(app: tauri::AppHandle) -> Result<(), String> {
-    let d = default_distro()?;
-    install(&app, &d)?;
+    let d = target_distro(&app)?;
+    // Name the distro in the error: a failure in the wrong distro (or one with no user
+    // home) is unreadable otherwise.
+    install(&app, &d).map_err(|e| format!("{d}: {e}"))?;
     set_wsl_connected(&app, true)
 }
 
 #[tauri::command]
 pub async fn remove_wsl_shim(app: tauri::AppHandle) -> Result<(), String> {
-    let result = default_distro().and_then(|d| remove(&d));
+    let result = target_distro(&app).and_then(|d| remove(&d));
     set_wsl_connected(&app, false)?;
     result
 }

@@ -6,6 +6,10 @@ import logo from "../assets/taco.png";
 
 const keys = ref({ region: "", window: "", clipboard: "" });
 const retention = ref(24);
+// "" follows WSL's own default; anything else is an explicit pick, applied on change
+const wslDistro = ref("");
+const distros = ref<string[]>([]);
+const wslDefault = ref("");
 
 type ShimHost = "native" | "wsl";
 const shimBusy = ref<ShimHost | "">("");
@@ -14,17 +18,34 @@ const shimOn = ref<Record<ShimHost, boolean>>({ native: false, wsl: false });
 
 onMounted(async () => {
   const s = await invoke<{
-    hotkey_region: string; hotkey_window: string; hotkey_clipboard: string; retention_hours: number;
+    hotkey_region: string; hotkey_window: string; hotkey_clipboard: string;
+    retention_hours: number; wsl_distro: string;
   }>("get_settings");
   keys.value = { region: s.hotkey_region, window: s.hotkey_window, clipboard: s.hotkey_clipboard };
   retention.value = s.retention_hours;
   try {
     shimOn.value = await invoke<Record<ShimHost, boolean>>("shim_status");
   } catch { /* leave both off rather than lock the buttons */ }
+  try {
+    const d = await invoke<{ distros: string[]; default: string }>("list_distros");
+    distros.value = d.distros;
+    wslDefault.value = d.default;
+    wslDistro.value = s.wsl_distro;
+  } catch { /* no WSL installed: the picker just stays empty */ }
   const w = getCurrentWindow();
   await w.show();
   await w.setFocus();
 });
+
+async function applyDistro() {
+  shimMsg.value = { ...shimMsg.value, wsl: "" };
+  try {
+    await invoke("set_wsl_distro", { distro: wslDistro.value });
+    shimOn.value = await invoke<Record<ShimHost, boolean>>("shim_status");
+  } catch (e) {
+    shimMsg.value = { ...shimMsg.value, wsl: String(e) };
+  }
+}
 
 async function install(host: ShimHost) {
   shimBusy.value = host;
@@ -92,6 +113,17 @@ function onKeydown(e: KeyboardEvent) {
           Without it, Taco copies the message to your clipboard and you paste it. Reversible in Settings.
         </p>
         <div class="row">
+          <select
+            v-if="distros.length"
+            class="selectbox distro"
+            v-model="wslDistro"
+            @change="applyDistro"
+            :disabled="shimBusy !== ''"
+            aria-label="WSL distribution"
+          >
+            <option value="">WSL default{{ wslDefault ? ` (${wslDefault})` : "" }}</option>
+            <option v-for="d in distros" :key="d" :value="d">{{ d }}</option>
+          </select>
           <button class="btn btn-quiet" :disabled="shimBusy !== '' || shimOn.wsl" @click="install('wsl')">
             {{ shimOn.wsl ? "WSL ✓" : "Install for WSL" }}
           </button>
@@ -137,7 +169,8 @@ header .sub + .sub { margin-top: 8px; }
 dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 6px 0; font-size: 12px; }
 dt { color: var(--muted); }
 dd { margin: 0; font-size: 12px; }
-.row { display: flex; gap: 8px; margin-top: 8px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.distro { flex: 1 1 130px; min-width: 0; padding: 4px 6px; font-size: 12px; }
 .row .btn { padding: 5px 12px; font-size: 12px; }
 .row .btn:disabled { opacity: .45; cursor: default; }
 .row .btn:disabled:hover { border-color: var(--line); }

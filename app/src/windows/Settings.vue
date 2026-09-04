@@ -113,6 +113,22 @@ function resetHotkeys() {
   if (recording.value) recording.value = "";
 }
 
+// "" means follow WSL's own default, so the pick keeps up with `wsl --set-default`
+const wslDistro = ref("");
+const distros = ref<string[]>([]);
+const wslDefault = ref("");
+
+// applied on change, not on Save, like the install buttons it sits next to
+async function applyDistro() {
+  shimMsg.value = { ...shimMsg.value, wsl: "" };
+  try {
+    await invoke("set_wsl_distro", { distro: wslDistro.value });
+    await refreshShimStatus();
+  } catch (e) {
+    shimMsg.value = { ...shimMsg.value, wsl: String(e) };
+  }
+}
+
 function snapshot() {
   return JSON.stringify([
     retentionHours.value, defaultInstruction.value,
@@ -128,9 +144,11 @@ onMounted(async () => {
     hotkey_region: string;
     hotkey_window: string;
     hotkey_clipboard: string;
+    wsl_distro: string;
   }>("get_settings");
   retentionHours.value = s.retention_hours;
   defaultInstruction.value = s.default_instruction;
+  wslDistro.value = s.wsl_distro;
   hotkeyRegion.value = s.hotkey_region;
   hotkeyWindow.value = s.hotkey_window;
   hotkeyClipboard.value = s.hotkey_clipboard;
@@ -139,6 +157,15 @@ onMounted(async () => {
   const d = await invoke<{ hotkey_region: string; hotkey_window: string; hotkey_clipboard: string }>("get_default_settings");
   defaults.value = { region: d.hotkey_region, window: d.hotkey_window, clipboard: d.hotkey_clipboard };
   await refreshShimStatus();
+  try {
+    const d = await invoke<{ distros: string[]; default: string }>("list_distros");
+    distros.value = d.distros;
+    wslDefault.value = d.default;
+    // a saved pick that WSL no longer knows about would silently target nothing
+    if (wslDistro.value && !d.distros.includes(wslDistro.value)) {
+      distros.value = [...d.distros, wslDistro.value];
+    }
+  } catch { /* no WSL: the picker just stays empty */ }
   try {
     const w = getCurrentWindow();
     await w.show();
@@ -289,6 +316,10 @@ async function save() {
           <strong>WSL</strong>
           <small>Install for your WSL distro. Reversible; also enables WSL session discovery.</small>
         </div>
+        <select class="selectbox distro" v-model="wslDistro" @change="applyDistro" :disabled="shimBusy !== '' || !distros.length">
+          <option value="">WSL default{{ wslDefault ? ` (${wslDefault})` : "" }}</option>
+          <option v-for="d in distros" :key="d" :value="d">{{ d }}</option>
+        </select>
         <button class="btn btn-quiet" :disabled="shimBusy !== '' || shimOn.wsl" @click="shimAction('wsl', 'install')">Install</button>
         <button class="btn btn-quiet" :disabled="shimBusy !== '' || !shimOn.wsl" @click="shimAction('wsl', 'remove')">Remove</button>
       </div>
@@ -330,6 +361,8 @@ input[readonly] { cursor: pointer; background: var(--raised); font-family: var(-
 .shim-text strong { color: var(--text); font-size: 12.5px; font-weight: 600; }
 .shim-text small { color: var(--muted); font-size: 11px; line-height: 1.45; }
 .shim-row .btn { padding: 5px 12px; font-size: 12px; }
+/* Takes the row's free width so the buttons keep their natural size beside it */
+.distro { flex: 1 1 120px; min-width: 0; padding: 4px 6px; font-size: 12px; }
 .shim-row .btn:disabled { opacity: .45; cursor: default; }
 .shim-row .btn:disabled:hover { border-color: var(--line); }
 </style>

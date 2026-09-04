@@ -102,10 +102,32 @@ pub fn list_sessions(wsl_connected: bool) -> Vec<Session> {
     sessions
 }
 
+/// Container-runtime plumbing, not a place anyone runs `claude`: these have no user
+/// home, and touching one over `\\wsl$` boots a VM for nothing. They also register
+/// ahead of real distros, so "the first one listed" used to pick them.
+pub fn is_utility_distro(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    ["docker-desktop", "rancher-desktop", "podman-machine"]
+        .iter()
+        .any(|p| n.starts_with(p))
+}
+
 /// Guard first: a failed wsl.exe prints error text, not a distro list (bug fix).
 pub fn distros_from(out: &std::process::Output) -> Vec<String> {
     if !out.status.success() { return Vec::new(); }
-    parse_wsl_list(&out.stdout)
+    let mut v = parse_wsl_list(&out.stdout);
+    v.retain(|d| !is_utility_distro(d));
+    v
+}
+
+/// `wsl -l -v` flags the default distro with a leading `*`. The header line never
+/// carries one, so this needs no locale-dependent header skipping — and unlike
+/// asking a shell for `$WSL_DISTRO_NAME`, reading the list boots nothing.
+pub fn default_from_verbose(bytes: &[u8]) -> Option<String> {
+    parse_wsl_list(bytes)
+        .into_iter()
+        .find(|l| l.starts_with('*'))
+        .and_then(|l| l.trim_start_matches('*').split_whitespace().next().map(str::to_string))
 }
 
 fn wsl_sessions() -> Vec<Session> {
@@ -188,6 +210,11 @@ pub fn list_sessions_cmd(app: tauri::AppHandle, state: tauri::State<crate::captu
 mod tests {
     use super::*;
 
+    /// wsl.exe writes its own listings as UTF-16LE
+    fn utf16(s: &str) -> Vec<u8> {
+        s.encode_utf16().flat_map(|u| u.to_le_bytes()).collect()
+    }
+
     #[test]
     fn parses_utf16_distro_list() {
         let mut bytes = Vec::new();
@@ -195,6 +222,33 @@ mod tests {
             bytes.extend_from_slice(&u.to_le_bytes());
         }
         assert_eq!(parse_wsl_list(&bytes), vec!["Ubuntu", "Debian"]);
+    }
+
+    #[test]
+    fn utility_distros_are_never_offered() {
+        use std::os::windows::process::ExitStatusExt;
+        let ok = std::process::Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: utf16("docker-desktop\r\ndocker-desktop-data\r\nUbuntu\r\nrancher-desktop\r\n"),
+            stderr: Vec::new(),
+        };
+        // Docker registers ahead of the real distro: "first listed" used to install there
+        assert_eq!(distros_from(&ok), vec!["Ubuntu"]);
+        assert!(is_utility_distro("Docker-Desktop"), "match is case-insensitive");
+        assert!(!is_utility_distro("Ubuntu-24.04"));
+    }
+
+    #[test]
+    fn default_distro_comes_from_the_verbose_marker() {
+        let listing = utf16(
+            "  NAME                   STATE           VERSION\r\n\
+             * Ubuntu                 Running         2\r\n  \
+             docker-desktop         Running         2\r\n",
+        );
+        assert_eq!(default_from_verbose(&listing).as_deref(), Some("Ubuntu"));
+        // no marker (older/odd output) leaves the caller to fall back
+        assert_eq!(default_from_verbose(&utf16("  Ubuntu   Running   2\r\n")), None);
+        assert_eq!(default_from_verbose(&[]), None);
     }
 
     fn sess(project: &str) -> Session {
