@@ -35,13 +35,13 @@ Delivery is tiered, evaluated per send:
 
 - **Tier 1 — PTY shim.** `dvc-shim` wraps `claude`, owns the PTY, and accepts
   injection with an ack. It ships in two flavors: a static musl Linux binary for
-  WSL and `dvc-shim.exe` for native Windows PowerShell. Either is installed only
+  WSL and `dvc-shim.exe` for native Windows. Either is installed only
   with your explicit consent and is fully reversible.
 - **Tier 2 — Clipboard assist.** Path + message are copied to the clipboard and
   a notification asks you to paste. Universal fallback; a send never hard-fails
   while Tier 2 is possible.
 
-## Features (v0.1.4)
+## Features (v1.0.0)
 
 - Region / full-screen / active-window / clipboard-image capture
 - Multi-monitor region capture: every screen is frozen and overlaid, so a capture
@@ -60,11 +60,12 @@ Taco no longer assumes WSL. A Claude Code session started in Windows PowerShell
 is a first-class target:
 
 - **Native Tier 1.** Installing the Windows shim copies `dvc-shim.exe` into
-  `%LOCALAPPDATA%\DeveloperVisualCompanion\bin\` and adds a `claude` function to
-  your PowerShell profile (Windows PowerShell 5.1, plus pwsh 7 when present).
-  Sessions started through it accept instant injection, same as WSL.
-  `cmd.exe` has no profile to hook, so those sessions use Tier 2 clipboard assist.
-- **Native session discovery.** Shim-wrapped PowerShell sessions register under
+  `%LOCALAPPDATA%\DeveloperVisualCompanion\bin\` and wraps `claude` in both
+  Windows shells: a `claude` function in your PowerShell profile (Windows
+  PowerShell 5.1, plus pwsh 7 when present), and a `claude.cmd` on PATH for
+  Command Prompt, which loads no profile. Sessions started through either accept
+  instant injection, same as WSL. Open a new terminal after installing.
+- **Native session discovery.** Shim-wrapped native sessions register under
   `%LOCALAPPDATA%\DeveloperVisualCompanion\run\` and appear in the composer's
   session picker alongside WSL ones. Sessions whose process has exited are
   filtered out rather than lingering in the list.
