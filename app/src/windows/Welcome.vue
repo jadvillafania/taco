@@ -81,7 +81,7 @@ function onKeydown(e: KeyboardEvent) {
         <h1>Taco is running</h1>
         <p class="expansion"><b>T</b>erminal <b>A</b>gent <b>C</b>ontext <b>O</b>ptics</p>
         <p class="sub">
-          Screenshots into your already-running Claude Code session — in WSL or PowerShell.
+          Screenshots into your already-running Claude Code session — in WSL, PowerShell, or Command Prompt.
           Not an AI app: no chat, no model, no account. It only feeds visual context into the
           agent conversation you already have open.
         </p>
@@ -128,7 +128,7 @@ function onKeydown(e: KeyboardEvent) {
             {{ shimOn.wsl ? "WSL ✓" : "Install for WSL" }}
           </button>
           <button class="btn btn-quiet" :disabled="shimBusy !== '' || shimOn.native" @click="install('native')">
-            {{ shimOn.native ? "PowerShell ✓" : "Install for PowerShell" }}
+            {{ shimOn.native ? "Windows ✓" : "Install for PowerShell + cmd" }}
           </button>
         </div>
         <p v-if="shimMsg.wsl" class="hint">{{ shimMsg.wsl }}</p>

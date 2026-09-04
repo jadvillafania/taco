@@ -305,7 +305,7 @@ async function save() {
       <div class="shim-row">
         <div class="shim-text">
           <strong>Windows (native)</strong>
-          <small>Install for Windows PowerShell. Reversible; cmd.exe keeps using clipboard delivery.</small>
+          <small>Install for PowerShell and Command Prompt. Reversible; open a new terminal afterwards.</small>
         </div>
         <button class="btn btn-quiet" :disabled="shimBusy !== '' || shimOn.native" @click="shimAction('native', 'install')">Install</button>
         <button class="btn btn-quiet" :disabled="shimBusy !== '' || !shimOn.native" @click="shimAction('native', 'remove')">Remove</button>
