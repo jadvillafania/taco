@@ -79,3 +79,14 @@ Deferred work, in rough priority order. Each lands as its own small branch when 
   deleter could unlink Windows-host files whose OpenProcess fails, but WSL ones
   need an age gate — a stopped distro makes every `\\wsl$\...\proc\<pid>` stat
   miss, so a blanket unlink would wipe a live install's whole registry.
+- The `claude.cmd` wrapper for Command Prompt bakes the absolute path resolved by
+  `where claude` at install time — a claude reinstall to a different directory
+  leaves it pointing at nothing (the shim then prints "spawn failed"). Re-running
+  the native install fixes it; a re-resolve on spawn failure would be kinder.
+- Neither native wrapper can launch an npm-installed `claude.cmd`/`.ps1`:
+  CreateProcess (portable-pty) only spawns real executables. Wrap the target in
+  `cmd /c` if anyone reports it.
+- Writing the user PATH through `[Environment]::SetEnvironmentVariable` expands a
+  `REG_EXPAND_SZ` PATH once (e.g. `%USERPROFILE%` becomes literal). Chosen over
+  `reg.exe`, which is blocked by policy on some machines, and over raw registry
+  writes, which would also need a WM_SETTINGCHANGE broadcast.

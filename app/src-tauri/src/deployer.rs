@@ -189,6 +189,76 @@ pub fn exec_policy_warning() -> Option<String> {
     }
 }
 
+pub fn native_cmd_wrapper() -> std::path::PathBuf {
+    native_bin_dir().join("claude.cmd")
+}
+
+/// cmd.exe has no profile and no functions, so its wrapper has to be a real file on
+/// PATH. It must invoke the *resolved* claude binary, never the bare name: our own
+/// claude.cmd sits earlier on PATH and would re-enter itself forever.
+/// ponytail: a .cmd/.bat claude (npm install) can't be spawned by CreateProcess —
+/// same ceiling the PowerShell wrapper already has; wrap in `cmd /c` if anyone hits it.
+pub fn cmd_wrapper_body(real_claude: &str) -> String {
+    format!(
+        "@echo off\r\n\"%LOCALAPPDATA%\\DeveloperVisualCompanion\\bin\\dvc-shim.exe\" run \"{real_claude}\" %*\r\n"
+    )
+}
+
+/// First `where claude` hit that isn't our own wrapper (a reinstall would otherwise
+/// bake a self-reference).
+pub fn real_claude_path() -> Option<String> {
+    let out = std::process::Command::new("where.exe")
+        .arg("claude")
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    if !out.status.success() { return None; }
+    let ours = native_bin_dir();
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .find(|l| !std::path::Path::new(l).starts_with(&ours))
+        .map(str::to_string)
+}
+
+fn same_dir(a: &str, b: &str) -> bool {
+    a.trim().trim_end_matches('\\').eq_ignore_ascii_case(b.trim().trim_end_matches('\\'))
+}
+
+/// `None` when it's already there — nothing to write.
+pub fn path_prepend(existing: &str, bin: &str) -> Option<String> {
+    if existing.split(';').any(|p| same_dir(p, bin)) { return None; }
+    Some(if existing.is_empty() { bin.to_string() } else { format!("{bin};{existing}") })
+}
+
+pub fn path_remove(existing: &str, bin: &str) -> String {
+    existing.split(';').filter(|p| !same_dir(p, bin)).collect::<Vec<_>>().join(";")
+}
+
+/// ponytail: the user PATH is read/written through .NET rather than the registry —
+/// it broadcasts WM_SETTINGCHANGE for us, and `reg.exe` is blocked by policy on some
+/// machines. Cost: a REG_EXPAND_SZ user PATH gets expanded once on write.
+fn ps(script: &str) -> Option<String> {
+    let out = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim_end().to_string())
+}
+
+fn user_path() -> String {
+    ps("[Environment]::GetEnvironmentVariable('Path','User')").unwrap_or_default()
+}
+
+fn set_user_path(v: &str) -> Result<(), String> {
+    let escaped = v.replace('\'', "''");
+    ps(&format!("[Environment]::SetEnvironmentVariable('Path','{escaped}','User')"))
+        .map(|_| ())
+        .ok_or_else(|| "could not update the user PATH".to_string())
+}
+
 pub fn install_windows(app: &tauri::AppHandle) -> Result<Option<String>, String> {
     use tauri::Manager;
     let src = app.path()
@@ -203,7 +273,21 @@ pub fn install_windows(app: &tauri::AppHandle) -> Result<Option<String>, String>
         let existing = std::fs::read_to_string(&p).unwrap_or_default();
         std::fs::write(&p, append_block(&existing)).map_err(|e| e.to_string())?;
     }
-    Ok(exec_policy_warning())
+    let mut warnings: Vec<String> = exec_policy_warning().into_iter().collect();
+    match real_claude_path() {
+        Some(real) => {
+            std::fs::write(native_cmd_wrapper(), cmd_wrapper_body(&real)).map_err(|e| e.to_string())?;
+            let bin_str = bin.to_string_lossy().into_owned();
+            if let Some(next) = path_prepend(&user_path(), &bin_str) {
+                set_user_path(&next)?;
+            }
+            warnings.push("Open a new terminal — Command Prompt picks up the wrapper from PATH.".into());
+        }
+        None => warnings.push(
+            "claude was not found on PATH, so the Command Prompt wrapper was skipped — PowerShell still works.".into(),
+        ),
+    }
+    Ok((!warnings.is_empty()).then(|| warnings.join(" ")))
 }
 
 pub fn remove_windows() -> Result<(), String> {
@@ -212,6 +296,11 @@ pub fn remove_windows() -> Result<(), String> {
             std::fs::write(&p, strip_block(&existing)).map_err(|e| e.to_string())?;
         }
     }
+    std::fs::remove_file(native_cmd_wrapper()).ok(); // absent wrapper is fine
+    let bin_str = native_bin_dir().to_string_lossy().into_owned();
+    let current = user_path();
+    let stripped = path_remove(&current, &bin_str);
+    if stripped != current { set_user_path(&stripped)?; }
     std::fs::remove_file(native_shim_exe()).ok(); // absent exe is fine
     Ok(())
 }
@@ -305,6 +394,26 @@ mod tests {
         assert_eq!(append_block(&once), once, "second append is a no-op");
         assert_eq!(strip_block(&once), orig, "strip restores the original");
         assert_eq!(strip_block(orig), orig, "strip without block is a no-op");
+    }
+
+    #[test]
+    fn cmd_wrapper_calls_the_resolved_binary_not_the_name() {
+        let body = cmd_wrapper_body(r"C:\Users\x\.local\bin\claude.exe");
+        assert!(body.contains(r#""C:\Users\x\.local\bin\claude.exe" %*"#), "{body}");
+        assert!(!body.contains("run claude "), "bare name would re-enter this wrapper: {body}");
+    }
+
+    #[test]
+    fn path_prepend_and_remove_round_trip() {
+        let bin = r"C:\Users\x\AppData\Local\DeveloperVisualCompanion\bin";
+        let orig = r"C:\Users\x\.local\bin;C:\other";
+        let with = path_prepend(orig, bin).expect("added");
+        assert!(with.starts_with(bin), "must win the PATH search: {with}");
+        assert_eq!(path_prepend(&with, bin), None, "second install is a no-op");
+        assert_eq!(path_remove(&with, bin), orig);
+        assert_eq!(path_remove(orig, bin), orig, "remove without the entry is a no-op");
+        // trailing-slash and case variants are the same directory
+        assert_eq!(path_prepend(&format!("{}\\", bin.to_lowercase()), bin), None);
     }
 
     #[test]
