@@ -90,3 +90,15 @@ Deferred work, in rough priority order. Each lands as its own small branch when 
   `REG_EXPAND_SZ` PATH once (e.g. `%USERPROFILE%` becomes literal). Chosen over
   `reg.exe`, which is blocked by policy on some machines, and over raw registry
   writes, which would also need a WM_SETTINGCHANGE broadcast.
+- Dismissing an overlay prints `PostMessage failed … 0x80070578 - Invalid window
+  handle.` in dev builds. Not ours and not fatal: `cancel_overlay` (like
+  `cancel_capture`, `region_selected`, `send_capture`) is an async command that
+  closes the very webview that invoked it, so Tauri answers the `ipc://` request
+  from a worker thread and wry's `dispatch_handler` posts the reply to a window
+  that no longer exists (wry-0.55.1 `webview2/mod.rs:1153`). wry ignores the
+  failure and only prints under `debug_assertions` — release builds are silent.
+  Cost: the invoke promise never resolves in a webview that's being destroyed
+  anyway, plus a one-off leak of wry's boxed closure. Dropping `async` from the
+  two cancel commands would silence those paths (a sync command answers inline
+  on the main thread), but `send_capture` must stay async, so the noise would
+  only half go away — left alone deliberately.
