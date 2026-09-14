@@ -37,7 +37,9 @@ fn open_welcome(app: &tauri::AppHandle) {
 
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
+        // ponytail: a second launch used to exit silently, so "I started it and nothing
+        // happened" was indistinguishable from a broken window. Show Welcome instead.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| open_welcome(app)))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -121,7 +123,10 @@ pub fn run() {
             let history = MenuItem::with_id(app, "history", "Capture History…", true, None::<&str>)?;
             let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
             let auto_on = app.autolaunch().is_enabled().unwrap_or(false);
-            let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, auto_on, None::<&str>)?;
+            // ponytail: greyed out in dev builds. Enabling it there writes the debug exe's path
+            // into the Run key, so every login starts the dev binary — which loads the Vite
+            // devUrl and shows "can't connect to localhost" in every window it opens.
+            let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", !cfg!(debug_assertions), auto_on, None::<&str>)?;
             let autostart_handle = autostart.clone();
             let welcome = MenuItem::with_id(app, "welcome", "Getting Started…", true, None::<&str>)?;
             let about = MenuItem::with_id(app, "about", "About Taco", true, None::<&str>)?;
