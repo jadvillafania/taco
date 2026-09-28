@@ -11,6 +11,10 @@ visual context into the agent conversation you already have open.
   <img src="docs/brand/taco-logo.png" width="200" alt="Taco logo">
 </p>
 
+<p align="center">
+  <img src="docs/brand/taco-demo.gif" alt="Taco demo: capture a UI region, type a prompt, pick the Claude session, Send — Claude Code receives the screenshot and fixes the button">
+</p>
+
 ## Install
 
 Grab the latest installer from
